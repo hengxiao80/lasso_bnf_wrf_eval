@@ -1,0 +1,48 @@
+{
+  "case": "20250520lassobnfwrfhrrr3",
+  "ref_run": "sey_dynlit",
+  "runs": [
+    {
+      "name": "sey_dynlit",
+      "label": "sey rund1-dynlit (hybrid_opt=2)",
+      "dir": "satoshi_testruns/20250520lassobnfwrfhrrr3/rund1-dynlit"
+    },
+    {
+      "name": "hybrid2",
+      "label": "hybrid2 (hybrid_opt=2, theta_m=1)",
+      "dir": "/gpfs/wolf2/arm/cli120/proj-shared/hengxiao80/bnf_wrf_da/cases/20250520/hybrid2"
+    },
+    {
+      "name": "baseline",
+      "label": "baseline (hybrid_opt=0, theta_m=1)",
+      "dir": "/gpfs/wolf2/arm/cli120/proj-shared/hengxiao80/bnf_wrf_da/cases/20250520/baseline"
+    },
+    {
+      "name": "theta_m0",
+      "label": "theta_m0 (use_theta_m=0)",
+      "dir": "/gpfs/wolf2/arm/cli120/proj-shared/hengxiao80/bnf_wrf_da/cases/20250520/theta_m0"
+    }
+  ],
+  "diffs": [
+    [
+      "hybrid2",
+      "sey_dynlit"
+    ],
+    [
+      "baseline",
+      "hybrid2"
+    ],
+    [
+      "baseline",
+      "theta_m0"
+    ]
+  ],
+  "side": [
+    "hybrid2",
+    "baseline"
+  ],
+  "side_labels": {
+    "hybrid2": "hybrid_opt=2 (hybrid2 = sey rund1-dynlit, bit-identical)",
+    "baseline": "hybrid_opt=0 (baseline)"
+  }
+}

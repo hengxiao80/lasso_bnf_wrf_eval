@@ -49,6 +49,7 @@ from pathlib import Path
 
 from .crtm_precompute import list_wrfout_times
 from .plotting import _case_output_path, _output_path
+from .runs_config import load_runset
 
 DEFAULT_DOMAIN = "d01"
 DEFAULT_RUNS_ROOT = "satoshi_testruns"
@@ -127,6 +128,42 @@ GROUPS = {
 }
 
 
+# Filled by `apply_runs_config` (`--runs-config`): explicit run dirs that
+# replace the built-in `<runs-root>/<case>/<scheme>` layout.
+RUN_DIRS: dict[tuple[str, str], Path] = {}
+REF_DIRS: dict[str, Path] = {}
+# Types that read the CRTM cache (would compute inline for unknown runs).
+CRTM_TYPES = {"tb4", "wrf_tb"}
+
+
+def _run_dir(runs_root: Path, case: str, scheme: str) -> Path:
+    return RUN_DIRS.get((case, scheme), runs_root / case / scheme)
+
+
+def _ref_dir(runs_root: Path, case: str) -> Path:
+    return REF_DIRS.get(case, runs_root / case / REF_SCHEME)
+
+
+def apply_runs_config(path: str | Path, domain: str = DEFAULT_DOMAIN) -> None:
+    """Replace CASES/SCHEMES with the runs of a `runs_config` JSON file.
+
+    Scheme keys are the run dirs' basenames (what `_render` looks labels up
+    by), so they must be unique. The d2 / dyn-lightning scopes are emptied
+    -- they assume the built-in layout and dyn-lightning output."""
+    global CASES, SCHEMES, D2_SCHEMES, DYNLIT_SCHEMES
+    rs = load_runset(path, domain)
+    CASES = [rs.case]
+    SCHEMES, D2_SCHEMES, DYNLIT_SCHEMES = {}, {}, {}
+    RUN_DIRS.clear()
+    for name, d in rs.runs.items():
+        if d.name in SCHEMES:
+            raise SystemExit(f"run dirs share basename {d.name!r}; batch_plot keys labels on it")
+        SCHEMES[d.name] = rs.labels[name]
+        RUN_DIRS[(rs.case, d.name)] = d
+    REF_DIRS.clear()
+    REF_DIRS[rs.case] = rs.ref_dir
+
+
 def _resolve_types(which: str) -> list[str]:
     names: list[str] = []
     for token in which.split(","):
@@ -196,7 +233,7 @@ def build_worklist(
             schemes = {"run": SCHEMES, "d2run": D2_SCHEMES, "dynlit": DYNLIT_SCHEMES}[scope]
             for case in CASES:
                 for scheme in schemes:
-                    run_dir = runs_root / case / scheme
+                    run_dir = _run_dir(runs_root, case, scheme)
                     times = _wrf_times(run_dir, domain, cadence)
                     if ptype in PAIRED_TYPES and times:
                         times = times[:-1]  # drop the last hour: no successor to pair with
@@ -209,7 +246,7 @@ def build_worklist(
                         items.append((ptype, run_dir, when, out_path))
         else:  # scope == "case"
             for case in CASES:
-                ref_dir = runs_root / case / REF_SCHEME
+                ref_dir = _ref_dir(runs_root, case)
                 if ptype == "goes_tb":
                     # 5-min regular grid, snapped to the nearest ABI scan
                     # per frame -- there is no wrfout at :05/:10/... .
@@ -303,23 +340,23 @@ def _render(item: tuple, opts: argparse.Namespace) -> None:
             )
         elif ptype == "hrrr_tb":
             plotting.plot_case_hrrr_tb_single(
-                when, key, runs_root / key / REF_SCHEME,
+                when, key, _ref_dir(runs_root, key),
                 hrrr_base_dir=opts.hrrr_dir, domain=opts.domain, out_file=out_path,
             )
         elif ptype == "hrrr_refl":
             plotting.plot_case_hrrr_refl_single(
-                when, key, runs_root / key / REF_SCHEME,
+                when, key, _ref_dir(runs_root, key),
                 hrrr_base_dir=opts.hrrr_dir, domain=opts.domain, out_file=out_path,
             )
         elif ptype == "goes_tb":
             plotting.plot_case_goes_tb_single(
-                when, key, runs_root / key / REF_SCHEME,
+                when, key, _ref_dir(runs_root, key),
                 goes_dir=opts.goes_dir, domain=opts.domain, out_file=out_path,
                 auto_download_goes=opts.auto_download,
             )
         elif ptype == "mrms_refl":
             plotting.plot_case_mrms_refl_single(
-                when, key, runs_root / key / REF_SCHEME,
+                when, key, _ref_dir(runs_root, key),
                 mrms_dir=opts.mrms_dir, domain=opts.domain, out_file=out_path,
                 auto_download_mrms=opts.auto_download,
             )
@@ -372,6 +409,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--which", default="all",
                    help="comparison | single | all | comma-separated type names")
     p.add_argument("--runs-root", default=DEFAULT_RUNS_ROOT)
+    p.add_argument("--runs-config", default=None,
+                   help="JSON run-set (configs/*.json) replacing CASES/SCHEMES; "
+                        "see bnf_wrf_eval.runs_config. Not valid for CRTM-based types.")
     p.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     p.add_argument("--domain", default=DEFAULT_DOMAIN)
     p.add_argument("--hrrr-dir", default=DEFAULT_HRRR_DIR)
@@ -409,6 +449,12 @@ def _resolve_task_slice(args: argparse.Namespace) -> tuple[int | None, int | Non
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     types = _resolve_types(args.which)
+    if args.runs_config:
+        dropped = [t for t in types if t in CRTM_TYPES]
+        if dropped:
+            print(f"--runs-config: dropping CRTM-based types {dropped} (no CRTM cache for these runs)")
+            types = [t for t in types if t not in CRTM_TYPES]
+        apply_runs_config(args.runs_config, args.domain)
 
     worklist = build_worklist(
         types,
