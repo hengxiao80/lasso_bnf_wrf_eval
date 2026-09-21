@@ -278,3 +278,61 @@ def read_column_max_reflectivity(
         time_str = b"".join(nc.variables["Times"][0, :]).decode("utf-8")
         valid_time = dt.datetime.strptime(time_str, "%Y-%m-%d_%H:%M:%S")
     return lon, lat, values, valid_time
+
+
+def read_accumulated_precipitation(
+    wrf_file: str | Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dt.datetime]:
+    """Surface precipitation accumulated since simulation start (mm, i.e.
+    kg m^-2 of liquid equivalent): grid-scale `RAINNC`. None of this
+    project's runs use a cumulus scheme, so `RAINC` is not read. Rain rates
+    come from differencing two files' totals."""
+    return read_field(wrf_file, "RAINNC")
+
+
+def read_hydrometeor_paths(
+    wrf_file: str | Path,
+    species: tuple[str, ...] = ("QCLOUD", "QRAIN", "QICE", "QSNOW", "QGRAUP"),
+) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray], dt.datetime]:
+    """Column-integrated path (kg m^-2) of each requested hydrometeor species.
+
+    For species mixing ratio `q` (kg per kg of *dry* air, WRF's convention),
+    ``path = sum_k q_k * m_k`` with ``m_k = (c1h*MUT + c2h) * (-dnw) / g``,
+    layer k's dry-air mass per unit area from WRF's hybrid-coordinate mass
+    (`MUT = MU + MUB`; `C1H`, `C2H`, `DNW` from the file -- for a pure-sigma
+    run `C1H = 1`, `C2H = 0`, for a hybrid run they blend to a pressure
+    coordinate aloft). `(c1h*MUT + c2h)*(-dnw)` is the layer's dry-air
+    pressure thickness, the same term WRF's hydrostatic integration uses;
+    dividing by g gives mass. Verified: layers sum to `MUT` (to ~0.1 Pa), and
+    against an independent `rho*dz` integral (agrees to ~0.4-2.4%).
+
+    Returns ``(lon, lat, {species_name: path}, valid_time)``; a species
+    missing from the file raises `KeyError`.
+    """
+    g = 9.81
+    with netCDF4.Dataset(wrf_file) as nc:
+        mut = np.ma.filled(nc.variables["MU"][0], np.nan) + np.ma.filled(nc.variables["MUB"][0], np.nan)
+        c1h = np.ma.filled(nc.variables["C1H"][0], np.nan)
+        c2h = np.ma.filled(nc.variables["C2H"][0], np.nan)
+        dnw = np.ma.filled(nc.variables["DNW"][0], np.nan)
+        # (nz, ny, nx) dry-air mass per unit area of each layer
+        mass = (c1h[:, None, None] * mut[None] + c2h[:, None, None]) * (-dnw)[:, None, None] / g
+        paths = {
+            name: np.sum(np.ma.filled(nc.variables[name][0], 0.0) * mass, axis=0)
+            for name in species
+        }
+        lon = np.ma.filled(nc.variables["XLONG"][0, ...], np.nan)
+        lat = np.ma.filled(nc.variables["XLAT"][0, ...], np.nan)
+        time_str = b"".join(nc.variables["Times"][0, :]).decode("utf-8")
+        valid_time = dt.datetime.strptime(time_str, "%Y-%m-%d_%H:%M:%S")
+    return lon, lat, paths, valid_time
+
+
+def read_water_paths(
+    wrf_file: str | Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dt.datetime]:
+    """Total liquid (`QCLOUD + QRAIN`) and ice (`QICE + QSNOW + QGRAUP`) water
+    paths, kg m^-2, as sums of `read_hydrometeor_paths`. Returns
+    ``(lon, lat, lwp, iwp, valid_time)``."""
+    lon, lat, p, t = read_hydrometeor_paths(wrf_file)
+    return lon, lat, p["QCLOUD"] + p["QRAIN"], p["QICE"] + p["QSNOW"] + p["QGRAUP"], t

@@ -4,11 +4,14 @@ GOES / MRMS / HRRR: panel frames, difference maps, and time series.
 Three products, all built from the WRF runs' *cheap* fields (no CRTM):
 
   * `panels_tb` / `panels_refl` -- top row: observations (GOES ch.13 + HRRR
-    OLR-Tb, or MRMS + HRRR `refc`); bottom row: every run.
-  * `diffs_tb` / `diffs_refl` -- one difference map per `diffs` pair in the
-    config (``a - b``), one row.
-  * `side_tb` / `side_refl` -- two runs (config `side`) side by side, 15-min
-    frames, for movies.
+    OLR-Tb, or MRMS + HRRR `refc`) and the reference run; bottom row: the
+    other runs.
+  * `pair_<field>` -- for every pair `(a, b)` in the config's `pairs`, frames
+    of run a | run b | a - b (no observations) for each field: `tb`, `refl`,
+    `precip` (15-min rate) and the cloud-water, rain, cloud-ice, snow and
+    graupel paths `clwp`/`rwp`/`ciwp`/`swp`/`gwp` (see
+    `wrf.read_hydrometeor_paths`). `pair_timeseries` adds domain-mean
+    precipitation / path time series with the a - b differences, per pair.
   * `timeseries` -- domain statistics vs. time for every run (and, where
     available, the observations restricted to the WRF domain's footprint): mean/min Tb,
     cold-cloud fraction, reflectivity coverage > 30 / 40 dBZ, and inter-run
@@ -22,7 +25,7 @@ against each other on this scale; use the GOES panel for pattern, not
 absolute value.
 
     python -m bnf_wrf_eval.run_compare --config configs/da_20250520.json \\
-        --which panels_tb,panels_refl,diffs_tb,diffs_refl --cadence 60
+        --which panels_tb,panels_refl,pair_tb,pair_refl --cadence 60
     python -m bnf_wrf_eval.run_compare --config ... --which timeseries
 """
 
@@ -45,16 +48,23 @@ from . import wrf as wrf_reader
 from .crtm_precompute import _parse_wrfout_time, list_wrfout_times
 from .runs_config import RunSet, load_runset
 
-TYPES = ["panels_tb", "panels_refl", "diffs_tb", "diffs_refl", "side_tb", "side_refl", "timeseries"]
-# frame cadence (minutes) per type; None -> the --cadence option. The side-by-side
-# and time-series types read only WRF, so they use every 15-min output.
-TYPE_CADENCE = {"side_tb": 15, "side_refl": 15, "timeseries": 15}
-TB_DIFF_LEVELS = np.arange(-30, 31, 5)
-REFL_DIFF_LEVELS = np.arange(-40, 41, 10)
+# hydrometeor path kinds -> wrfout mixing-ratio variable
+SPECIES = {"clwp": "QCLOUD", "rwp": "QRAIN", "ciwp": "QICE", "swp": "QSNOW", "gwp": "QGRAUP"}
+PAIR_FIELDS = ["tb", "refl", "precip"] + list(SPECIES)
+PAIR_TYPES = [f"pair_{k}" for k in PAIR_FIELDS] + ["pair_timeseries"]
+TYPES = ["panels_tb", "panels_refl", "timeseries"] + PAIR_TYPES
+# frame cadence (minutes) per type, else the --cadence option. Every pair field is
+# 15-min (for movies); the multi-run panels (with hourly HRRR) are hourly. The
+# time-series types read only WRF, so they use every 15-min output.
+TYPE_CADENCE = {f"pair_{k}": 15 for k in PAIR_FIELDS}
+TYPE_CADENCE.update({"timeseries": 15, "pair_timeseries": 15})
+PRECIP_WINDOW_MIN = 15  # precipitation rate = accumulation over this window, scaled to mm/h
 COLD_TB_K = 235.0
 REFL_THRESHOLDS = (30.0, 40.0)
 
 _RUN_COLORS = ["#1b6ca8", "#d95f02", "#4d9221", "#7b3294", "#666666"]
+# one distinct colour per run pair in the inter-run difference panels (up to 6 pairs for 4 runs)
+_PAIR_COLORS = ["#1b6ca8", "#d95f02", "#4d9221", "#7b3294", "#a6761d", "#e7298a", "#666666", "#1b9e77"]
 
 
 # --------------------------------------------------------------- field access
@@ -111,45 +121,29 @@ def plot_panels(kind: str, when: dt.datetime, rs: RunSet, opts, out_file, pad_de
 
     proj, dlon, dlat, extent, outline = _domain(rs, opts.domain, pad_deg)
     levels, cmap, extend, cbar_label = _style(kind)
-    names = list(rs.runs)
-    ncols = max(len(names), 2)
+    obs = _obs_fields(kind, when, opts)
+    top = [rs.ref_run]                                   # reference run joins the obs row
+    bottom = [n for n in rs.runs if n != rs.ref_run]
+    ncols = max(len(obs) + len(top), len(bottom))
     fig, axes = _subplots(2, ncols, proj, 5.2, 3.7)
     for ax in axes.flat:
         ax.set_visible(False)
 
     mesh = None
-    for j, (lo, la, v, title) in enumerate(_obs_fields(kind, when, opts)):
+    for j, (lo, la, v, title) in enumerate(obs):
         lo, la, v = P._crop_to_extent(lo, la, v, extent)
         axes[0, j].set_visible(True)
         mesh = P._plot_panel(axes[0, j], lo, la, v, levels, cmap, extent, title,
                              extend=extend, domain_outline=outline)
-    for j, name in enumerate(names):
+    slots = [(0, len(obs) + j, n) for j, n in enumerate(top)] + [(1, j, n) for j, n in enumerate(bottom)]
+    for r, c, name in slots:
         lo, la, v, _ = _wrf_field(kind, rs.runs[name], when, opts.domain)
-        axes[1, j].set_visible(True)
-        mesh = P._plot_panel(axes[1, j], lo, la, v, levels, cmap, extent, rs.labels[name],
+        axes[r, c].set_visible(True)
+        mesh = P._plot_panel(axes[r, c], lo, la, v, levels, cmap, extent, rs.labels[name],
                              extend=extend, domain_outline=outline)
     fig.colorbar(mesh, ax=list(axes.flat), label=cbar_label, shrink=0.6, pad=0.01)
     what = "OLR-derived Tb" if kind == "tb" else "column-max reflectivity"
     fig.suptitle(f"{rs.case[:8]}  {what}  --  {when:%Y-%m-%d %H:%M} UTC", fontsize=15, fontweight="bold")
-    fig.savefig(out_file, dpi=110, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_side(kind: str, when: dt.datetime, rs: RunSet, opts, out_file, pad_deg=0.5):
-    import matplotlib.pyplot as plt
-
-    proj, dlon, dlat, extent, outline = _domain(rs, opts.domain, pad_deg)
-    levels, cmap, extend, cbar_label = _style(kind)
-    fig, axes = _subplots(1, 2, proj, 5.6, 4.6)
-    mesh = None
-    for ax, name in zip(axes.flat, rs.side):
-        lo, la, v, _ = _wrf_field(kind, rs.runs[name], when, opts.domain)
-        mesh = P._plot_panel(ax, lo, la, v, levels, cmap, extent,
-                             rs.side_labels.get(name, rs.labels[name]),
-                             extend=extend, domain_outline=outline)
-    fig.colorbar(mesh, ax=list(axes.flat), label=cbar_label, shrink=0.8, pad=0.01)
-    what = "OLR-derived Tb" if kind == "tb" else "column-max reflectivity"
-    fig.suptitle(f"{rs.case[:8]}  {what}  --  {when:%Y-%m-%d %H:%M} UTC", fontsize=14, fontweight="bold")
     fig.savefig(out_file, dpi=110, bbox_inches="tight")
     plt.close(fig)
 
@@ -160,29 +154,150 @@ def _floor0(v):
     return np.maximum(v, 0.0)
 
 
-def plot_diffs(kind: str, when: dt.datetime, rs: RunSet, opts, out_file, pad_deg=0.5):
+# ------------------------------------------------------ precip / water paths
+def _trunc_cmap(name: str, lo: float = 0.2, hi: float = 1.0):
+    """Sequential colormap without its near-white low end, so the lowest
+    contour level is still visible on a white map background."""
+    from matplotlib.colors import LinearSegmentedColormap
     import matplotlib.pyplot as plt
 
+    return LinearSegmentedColormap.from_list(f"{name}_t", plt.get_cmap(name)(np.linspace(lo, hi, 256)))
+
+
+# kind -> (title, colorbar label, levels, cmap, diff levels, min value shown,
+# colorbar extend, stat shown next to the mean). Linear (uniform-width) levels;
+# values below `min shown` are left blank so the lowest bin does not paint every
+# trace-amount cell. Difference levels are uniform too, with a central bin
+# straddling zero. Each species has its own scale (about the domain's 99th
+# percentile at the top; snow >> graupel > rain > cloud water >> cloud ice).
+_G = "g m$^{-2}$"
+_PAIR_KINDS = {
+    "tb": ("OLR-derived brightness temperature", "Brightness Temp. (K)",
+           P.DEFAULT_CTT_LEVELS, P.DEFAULT_TB_CMAP, np.arange(-32.5, 33, 5), -np.inf, "both", "min"),
+    "refl": ("Column-max reflectivity (floored at 0 dBZ)", "Comp. Refl (dBZ)",
+             P.DEFAULT_REFL_LEVELS, "turbo", np.arange(-35, 36, 10), -np.inf, "max", "max"),
+    "precip": ("Surface precipitation rate (15-min accumulation x 4)", "mm / h",
+               np.arange(0, 63, 3), _trunc_cmap("YlGnBu"), np.arange(-27, 28, 6), 0.1, "max", "max"),
+    "clwp": ("Cloud liquid water path (CLWP)", _G,
+             np.arange(0, 2200, 200), _trunc_cmap("Blues"), np.arange(-900, 901, 200), 10.0, "max", "max"),
+    "rwp": ("Rain water path (RWP)", _G,
+            np.arange(0, 2750, 250), _trunc_cmap("YlGnBu"), np.arange(-1125, 1126, 250), 10.0, "max", "max"),
+    "ciwp": ("Cloud ice water path (CIWP)", _G,
+             np.arange(0, 110, 10), _trunc_cmap("BuPu"), np.arange(-45, 46, 10), 1.0, "max", "max"),
+    "swp": ("Snow water path (SWP)", _G,
+            np.arange(0, 11000, 1000), _trunc_cmap("PuRd"), np.arange(-4500, 4501, 1000), 10.0, "max", "max"),
+    "gwp": ("Graupel water path (GWP)", _G,
+            np.arange(0, 2200, 200), _trunc_cmap("Oranges"), np.arange(-900, 901, 200), 10.0, "max", "max"),
+}
+
+
+def _pair_field(kind: str, run_dir: Path, when: dt.datetime, domain: str):
+    """(lon, lat, values) for one run; units per `_PAIR_KINDS`."""
+    f = P._find_wrf_file(run_dir, domain, when)
+    if kind == "tb":
+        lo, la, tb, _ = wrf_reader.read_brightness_temperature_from_olr(f)
+        return lo, la, tb
+    if kind == "refl":
+        lo, la, refl, _ = wrf_reader.read_column_max_reflectivity(f)
+        return lo, la, _floor0(refl)  # WRF's -30 dBZ "no echo" fill -> 0
+    if kind == "precip":
+        lo, la, acc, _ = wrf_reader.read_accumulated_precipitation(f)
+        prev = P._find_wrf_file(run_dir, domain, when - dt.timedelta(minutes=PRECIP_WINDOW_MIN))
+        _, _, acc0, _ = wrf_reader.read_accumulated_precipitation(prev)
+        # accumulation over the window, scaled to mm/h (15 min -> x4)
+        return lo, la, np.maximum(acc - acc0, 0.0) * (60.0 / PRECIP_WINDOW_MIN)
+    var = SPECIES[kind]
+    lo, la, paths, _ = wrf_reader.read_hydrometeor_paths(f, (var,))
+    return lo, la, 1000.0 * paths[var]  # kg/m2 -> g/m2
+
+
+def plot_pair(kind: str, when: dt.datetime, rs: RunSet, opts, out_file, pair, pad_deg=0.5):
+    """Run a | run b | a - b for one field (`PAIR_FIELDS`)."""
+    import matplotlib.pyplot as plt
+
+    a, b = pair
     proj, dlon, dlat, extent, outline = _domain(rs, opts.domain, pad_deg)
-    levels = TB_DIFF_LEVELS if kind == "tb" else REFL_DIFF_LEVELS
-    n = len(rs.diffs)
-    fig, axes = _subplots(1, n, proj, 5.4, 4.6)
-    mesh = None
-    stats = []
-    for ax, (a, b) in zip(axes.flat, rs.diffs):
-        lo, la, va, _ = _wrf_field(kind, rs.runs[a], when, opts.domain)
-        _, _, vb, _ = _wrf_field(kind, rs.runs[b], when, opts.domain)
-        if kind == "refl":
-            va, vb = _floor0(va), _floor0(vb)
-        d = va - vb
-        rms = float(np.sqrt(np.nanmean(d**2)))
-        mesh = P._plot_panel(ax, lo, la, d, levels, "RdBu_r", extent,
-                             f"{a} - {b}\nRMS {rms:.2f}, max|d| {np.nanmax(np.abs(d)):.1f}",
-                             extend="both", domain_outline=outline)
-    unit = "K" if kind == "tb" else "dBZ"
-    fig.colorbar(mesh, ax=list(axes.flat), label=f"difference ({unit})", shrink=0.7, pad=0.01)
-    what = "OLR-derived Tb" if kind == "tb" else "column-max reflectivity (floored at 0 dBZ)"
-    fig.suptitle(f"{rs.case[:8]}  {what} differences  --  {when:%Y-%m-%d %H:%M} UTC",
+    title, unit, levels, cmap, dlevels, vmin, extend, stat = _PAIR_KINDS[kind]
+    fig, axes = _subplots(1, 3, proj, 5.2, 4.4)
+    lo, la, va = _pair_field(kind, rs.runs[a], when, opts.domain)
+    _, _, vb = _pair_field(kind, rs.runs[b], when, opts.domain)
+    show = lambda v: np.where(v >= vmin, v, np.nan)
+    # mean and max (min for Tb) over the whole domain (unmasked field)
+    extreme = np.nanmin if stat == "min" else np.nanmax
+    label = lambda n, v: f"{rs.labels[n]}\nmean {np.nanmean(v):,.2f}, {stat} {extreme(v):,.2f}"
+    m1 = P._plot_panel(axes[0, 0], lo, la, show(va), levels, cmap, extent, label(a, va),
+                       extend=extend, domain_outline=outline)
+    P._plot_panel(axes[0, 1], lo, la, show(vb), levels, cmap, extent, label(b, vb),
+                  extend=extend, domain_outline=outline)
+    d = va - vb
+    m2 = P._plot_panel(axes[0, 2], lo, la, d, dlevels, "BrBG" if kind not in ("tb", "refl") else "RdBu_r",
+                       extent, f"{a} - {b}\nmean {np.nanmean(d):+,.2f}, RMS {np.sqrt(np.nanmean(d**2)):,.2f}",
+                       extend="both", domain_outline=outline)
+    dunit = "K" if kind == "tb" else ("dBZ" if kind == "refl" else unit)
+    fig.colorbar(m1, ax=list(axes[0, :2]), label=unit, shrink=0.8, pad=0.01)
+    fig.colorbar(m2, ax=[axes[0, 2]], label=f"difference ({dunit})", shrink=0.8, pad=0.01)
+    fig.suptitle(f"{rs.case[:8]}  {title}  --  {when:%Y-%m-%d %H:%M} UTC",
+                 fontsize=14, fontweight="bold")
+    fig.savefig(out_file, dpi=110, bbox_inches="tight")
+    plt.close(fig)
+
+
+def compute_pair_timeseries(rs: RunSet, opts, times, pair, log=print) -> dict:
+    """Domain-mean accumulated precip (mm) and per-species paths (g/m^2) per
+    run at every time; columns: `precip`, then `SPECIES` in order."""
+    names = list(pair)
+    out = {"times": np.array([np.datetime64(t) for t in times])}
+    for n in names:
+        out[f"{n}/vals"] = np.full((len(times), 1 + len(SPECIES)), np.nan)
+    t0 = time.time()
+    for i, when in enumerate(times):
+        for n in names:
+            f = P._find_wrf_file(rs.runs[n], opts.domain, when)
+            _, _, acc, _ = wrf_reader.read_accumulated_precipitation(f)
+            _, _, paths, _ = wrf_reader.read_hydrometeor_paths(f, tuple(SPECIES.values()))
+            out[f"{n}/vals"][i] = [np.nanmean(acc)] + [1000 * np.nanmean(paths[v]) for v in SPECIES.values()]
+        if i % 20 == 0:
+            log(f"[{i + 1}/{len(times)}] {when:%m-%d %H:%M}  {time.time() - t0:.0f}s")
+    return out
+
+
+def plot_pair_timeseries(stats: dict, rs: RunSet, out_file, pair):
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+
+    a, b = pair
+    times = stats["times"].astype("datetime64[s]").astype(object)
+    va, vb = stats[f"{a}/vals"], stats[f"{b}/vals"]
+    dt_h = np.diff(stats["times"].astype("datetime64[s]").astype(float)) / 3600.0
+    rate = lambda v: np.diff(v[:, 0]) / dt_h  # mm/h, between consecutive outputs
+    fig, axes = plt.subplots(4, 2, figsize=(14, 15), sharex=True, constrained_layout=True)
+    ax = axes.flat
+    cols = {a: _RUN_COLORS[0], b: _RUN_COLORS[1]}
+    ra, rb = rate(va), rate(vb)
+    for n, r in ((a, ra), (b, rb)):
+        ax[0].plot(times[1:], r, color=cols[n], lw=1.2, label=rs.labels[n])
+    ax[1].plot(times[1:], ra - rb, color="k", lw=1.2)
+    ax[0].set_title("Domain-mean precipitation rate (mm/h)", fontsize=11)
+    ax[1].set_title(f"Precipitation rate difference, {a} - {b} (mm/h)", fontsize=11)
+    ax[0].legend(fontsize=8)
+    ax[1].axhline(0, color="0.5", lw=0.8)
+    diff_colors = _RUN_COLORS + ["#a6761d"]
+    for j, kind in enumerate(SPECIES, start=1):
+        title = _PAIR_KINDS[kind][0].split("(")[-1].rstrip(")")
+        for n, v in ((a, va), (b, vb)):
+            ax[1 + j].plot(times, v[:, j], color=cols[n], lw=1.2)
+        ax[1 + j].set_title(f"Domain-mean {title} (g/m$^2$)", fontsize=11)
+        ax[7].plot(times, va[:, j] - vb[:, j], color=diff_colors[j - 1], lw=1.2, label=title)
+    ax[7].set_title(f"Path differences, {a} - {b} (g/m$^2$)", fontsize=11)
+    ax[7].axhline(0, color="0.5", lw=0.8)
+    ax[7].legend(fontsize=8, ncol=2)
+    for a_ in ax:
+        a_.grid(alpha=0.3)
+    for a_ in axes[-1]:
+        a_.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 12]))
+        a_.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:00"))
+        a_.tick_params(axis="x", labelrotation=30)
+    fig.suptitle(f"{rs.case[:8]}  {a} vs {b}: precipitation and water paths (domain means)",
                  fontsize=14, fontweight="bold")
     fig.savefig(out_file, dpi=110, bbox_inches="tight")
     plt.close(fig)
@@ -308,8 +423,8 @@ def plot_timeseries(stats: dict, rs: RunSet, out_file):
     ax[0].legend(fontsize=7.5, loc="best")
     pair_keys = [k.split("/", 1)[1] for k in stats if k.startswith("rms_tb/")]
     for j, pk in enumerate(pair_keys):
-        ax[5].plot(times, stats[f"rms_tb/{pk}"], color=_RUN_COLORS[j % 5], lw=1.2, label=pk.replace("|", " vs "))
-        ax[6].plot(times, stats[f"rms_refl/{pk}"], color=_RUN_COLORS[j % 5], lw=1.2, label=pk.replace("|", " vs "))
+        ax[5].plot(times, stats[f"rms_tb/{pk}"], color=_PAIR_COLORS[j % len(_PAIR_COLORS)], lw=1.2, label=pk.replace("|", " vs "))
+        ax[6].plot(times, stats[f"rms_refl/{pk}"], color=_PAIR_COLORS[j % len(_PAIR_COLORS)], lw=1.2, label=pk.replace("|", " vs "))
     ax[5].set_title("Inter-run RMS diff, Tb (K)", fontsize=11)
     ax[6].set_title("Inter-run RMS diff, reflectivity (dBZ, floored at 0)", fontsize=11)
     for a in (ax[5], ax[6]):
@@ -386,29 +501,33 @@ def main(argv=None) -> int:
 
     work = []
     for t in types:
-        if t == "timeseries":
-            work.append((t, None, root / "timeseries.png"))
+        if t in PAIR_TYPES and not rs.pairs:
             continue
-        if (t.startswith("diffs") and not rs.diffs) or (t.startswith("side") and not rs.side):
-            continue
-        for when in times_for(t):
-            work.append((t, when, root / "frames" / t / f"{t}_{rs.case[:8]}_{when:%Y%m%d_%H%MZ}.png"))
+        # panels / timeseries: one item each; pair types: one series per configured pair
+        for pair in (rs.pairs if t in PAIR_TYPES else [None]):
+            tag = f"_{pair[0]}_vs_{pair[1]}" if pair else ""
+            if t in ("timeseries", "pair_timeseries"):
+                work.append((t, None, root / f"{t}{tag}.png", pair))
+                continue
+            for when in times_for(t)[1 if t == "pair_precip" else 0:]:  # rate needs the hour before
+                out = root / "frames" / t / f"{t}{tag}_{rs.case[:8]}_{when:%Y%m%d_%H%MZ}.png"
+                work.append((t, when, out, pair))
     idx = a.task_index if a.task_index is not None else (int(os.environ["SLURM_ARRAY_TASK_ID"]) if "SLURM_ARRAY_TASK_ID" in os.environ else None)
     cnt = a.task_count if a.task_count is not None else (int(os.environ["SLURM_ARRAY_TASK_COUNT"]) if "SLURM_ARRAY_TASK_COUNT" in os.environ else None)
     if idx is not None:
         work = work[idx::cnt]
     if a.limit:
         work = work[: a.limit]
-    print(f"run_compare: runs={list(rs.runs)} diffs={rs.diffs} frames={len(work)}", flush=True)
+    print(f"run_compare: runs={list(rs.runs)} pairs={rs.pairs} frames={len(work)}", flush=True)
     if a.list:
         for w in work:
             print(w[0], w[1], w[2])
         return 0
 
     failed = 0
-    for i, (t, when, out) in enumerate(work, 1):
+    for i, (t, when, out, extra) in enumerate(work, 1):
         out.parent.mkdir(parents=True, exist_ok=True)
-        if t != "timeseries" and out.exists() and not a.overwrite:
+        if t not in ("timeseries", "pair_timeseries") and out.exists() and not a.overwrite:
             print(f"[{i}/{len(work)}] SKIP {out.name}")
             continue
         t0 = time.time()
@@ -421,12 +540,18 @@ def main(argv=None) -> int:
                     stats = compute_timeseries(rs, a, times)
                     np.savez(cache, **stats)
                 plot_timeseries(stats, rs, out)
-            elif t.startswith("side"):
-                plot_side(t.split("_")[1], when, rs, a, out)
-            elif t.startswith("panels"):
-                plot_panels(t.split("_")[1], when, rs, a, out)
+            elif t == "pair_timeseries":
+                cache = out.with_name(out.stem + "_stats.npz")
+                if cache.exists() and not a.overwrite:
+                    stats = dict(np.load(cache))
+                else:
+                    stats = compute_pair_timeseries(rs, a, times, extra)
+                    np.savez(cache, **stats)
+                plot_pair_timeseries(stats, rs, out, extra)
+            elif t in PAIR_TYPES:
+                plot_pair(t.split("_", 1)[1], when, rs, a, out, extra)
             else:
-                plot_diffs(t.split("_")[1], when, rs, a, out)
+                plot_panels(t.split("_")[1], when, rs, a, out)
             print(f"[{i}/{len(work)}] OK {out.name} {time.time() - t0:.1f}s", flush=True)
         except Exception as exc:  # noqa: BLE001
             failed += 1

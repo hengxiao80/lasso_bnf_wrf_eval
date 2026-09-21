@@ -23,11 +23,7 @@
       "dir": "/gpfs/wolf2/arm/cli120/proj-shared/hengxiao80/bnf_wrf_da/cases/20250520/theta_m0"
     }
   ],
-  "diffs": [
-    [
-      "hybrid2",
-      "sey_dynlit"
-    ],
+  "pairs": [
     [
       "baseline",
       "hybrid2"
@@ -36,13 +32,5 @@
       "baseline",
       "theta_m0"
     ]
-  ],
-  "side": [
-    "hybrid2",
-    "baseline"
-  ],
-  "side_labels": {
-    "hybrid2": "hybrid_opt=2 (hybrid2 = sey rund1-dynlit, bit-identical)",
-    "baseline": "hybrid_opt=0 (baseline)"
-  }
+  ]
 }

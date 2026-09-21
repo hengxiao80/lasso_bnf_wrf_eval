@@ -7,15 +7,10 @@ Schema (see `configs/da_20250520.json`)::
     {"case": "<case label for the shared HRRR/GOES/MRMS single-panel files>",
      "ref_run": "<run name whose wrfout gives domain geometry>",
      "runs": [{"name": ..., "label": ..., "dir": ...}, ...],
-     "diffs": [["a", "b"], ...],          # optional; a - b difference maps
-     "side": ["left", "right"],           # optional; side-by-side movie pair
-     "side_labels": {"name": "title"}}    # optional; titles for the side pair
+     "pairs": [["a", "b"], ...]}          # optional; each pair gets a | b | a - b frames
 
-A run whose directory holds no `wrfout_<domain>_*` file yet (e.g. a run that
-has not been made) is dropped with a warning rather than failing, so one
-config can list runs that come online later. Relative `dir`s resolve against
-the working directory. Run names must be unique.
-"""
+The reference run (`ref_run`) also goes in the top row of the multi-run panels.
+Pairs naming a run without output are dropped. """
 
 from __future__ import annotations
 
@@ -31,9 +26,7 @@ class RunSet:
     ref_run: str
     runs: dict[str, Path]          # name -> run dir (only runs with output)
     labels: dict[str, str]         # name -> plot label
-    diffs: list[tuple[str, str]] = field(default_factory=list)
-    side: tuple[str, str] | None = None   # (left, right) for side-by-side movies
-    side_labels: dict[str, str] = field(default_factory=dict)
+    pairs: list[tuple[str, str]] = field(default_factory=list)  # (a, b): frames show a | b | a - b
 
     @property
     def ref_dir(self) -> Path:
@@ -55,6 +48,5 @@ def load_runset(path: str | Path, domain: str = "d01") -> RunSet:
     ref = cfg["ref_run"]
     if ref not in runs:
         raise ValueError(f"ref_run {ref!r} has no output")
-    diffs = [tuple(p) for p in cfg.get("diffs", []) if p[0] in runs and p[1] in runs]
-    side = tuple(cfg["side"]) if cfg.get("side") and all(n in runs for n in cfg["side"]) else None
-    return RunSet(cfg["case"], ref, runs, labels, diffs, side, cfg.get("side_labels", {}))
+    pairs = [tuple(p) for p in cfg.get("pairs", []) if all(n in runs for n in p)]
+    return RunSet(cfg["case"], ref, runs, labels, pairs)

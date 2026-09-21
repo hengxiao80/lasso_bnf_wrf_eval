@@ -429,15 +429,28 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
 ## Multi-run comparison (`run_compare.py`, `--runs-config`)
 
 For comparing WRF experiments that live outside `satoshi_testruns` (first use: the `bnf_wrf_da` runs of the
-2025-05-20 case, `configs/da_20250520.json`). `runs_config.py` loads a JSON run set (runs, `diffs` pairs, `side`
-pair; runs with no wrfout yet, e.g. `theta_m0`, are skipped with a warning and join automatically later).
-`batch_plot --runs-config <json>` swaps CASES/SCHEMES for those dirs so the single-panel types work unchanged
-(CRTM types `tb4`/`wrf_tb` are dropped -- no CRTM cache for these runs). `python -m bnf_wrf_eval.run_compare`
-adds `panels_tb/refl` (obs row + one panel per run), `diffs_tb/refl` (a - b maps), `side_tb/side_refl` (two runs
-side by side, 15-min, for movies) and `timeseries` (mean/min Tb, cold-cloud fraction Tb<235 K, reflectivity
-coverage >30/40 dBZ, pairwise inter-run RMS, obs overlaid; cached npz). Output under
-`outputs/compare/<case>/`; `scripts/run_compare.sbatch` drives it. Movies:
-`make_movies --which side_tb,side_refl --frames-root outputs/compare/<case>/frames --movies-dir outputs/compare/<case>/movies`.
+2025-05-20 case, `configs/da_20250520.json`). `runs_config.py` loads a JSON run set (runs, `ref_run`, and `pairs`;
+runs with no wrfout yet are skipped with a warning and join automatically later -- but while a run is still being
+written, every product is limited to the times all runs share). `batch_plot --runs-config <json>` swaps
+CASES/SCHEMES for those dirs so the single-panel types work unchanged (CRTM types `tb4`/`wrf_tb` are dropped -- no
+CRTM cache for these runs). `python -m bnf_wrf_eval.run_compare` makes:
+
+- `panels_tb` / `panels_refl` -- 2 x N grid: top row = observations (GOES + HRRR, or MRMS + HRRR) and the
+  reference run (`ref_run`, sey's), bottom row = the other runs. Hourly.
+- `pair_<field>` -- for **every pair** `(a, b)` in `pairs`, frames of run a | run b | a - b (no observations),
+  for every field: `tb` (OLR-derived), `refl` (column max, floored at 0 dBZ), `precip` (15-min rate: 15-min `RAINNC`
+  accumulation x 4 = mm/h; no runs use a cumulus scheme) and the column paths `clwp` (`QCLOUD`), `rwp` (`QRAIN`),
+  `ciwp` (`QICE`), `swp` (`QSNOW`), `gwp` (`QGRAUP`) (`wrf.read_hydrometeor_paths`: dry-air layer mass
+  `(c1h*MUT+c2h)*(-dnw)/g`, with `C1H`/`C2H` read from each file so sigma `hybrid_opt=0` and hybrid `hybrid_opt=2`
+  runs are both handled). Linear levels scaled per field; difference panels have a central bin around 0.
+  All pair frames are 15-min (for movies; `make_movies --which pair_tb,pair_refl,pair_precip,pair_clwp,...`). Files are named `pair_<field>_<a>_vs_<b>_...png`.
+  `pair_timeseries` adds domain-mean precipitation-rate and path time series with a - b differences, per pair.
+- `timeseries` -- all-run domain statistics (mean/min Tb, cold-cloud fraction Tb<235 K, reflectivity coverage
+  >30/40 dBZ, inter-run RMS, obs overlaid); cached npz.
+
+Output under `outputs/compare/<case>/` (`frames/<type>/`, `movies/`); `scripts/run_compare.sbatch` drives it
+(`WHICH=`, `EXTRA=--overwrite`). Movies:
+`make_movies --which pair_tb,pair_refl --frames-root outputs/compare/<case>/frames --movies-dir outputs/compare/<case>/movies`.
 
 **IMPORTANT -- Tb here is OLR-derived for every model panel (WRF and HRRR), like the d2 plots and unlike d1
 `tb4`.** No CRTM; the models run ~8-10 K warm vs. GOES ch.13 in the domain mean. Use for run-vs-run comparison and
