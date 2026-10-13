@@ -261,7 +261,7 @@ def read_dyn_lightning_flash_counts(
 
 
 def read_column_max_reflectivity(
-    wrf_file: str | Path, varname: str = "REFL_10CM"
+    wrf_file: str | Path, varname: str = "REFL_10CM", levels_per_read: int = 10
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dt.datetime]:
     """Column-max radar reflectivity (dBZ), computed from the 3D field.
 
@@ -270,9 +270,18 @@ def read_column_max_reflectivity(
     every time (likely never accumulated/reset correctly for this run),
     so this takes the max over height of the instantaneous 3D
     `REFL_10CM` field instead, which does hold real values.
+
+    The max is taken over `levels_per_read` vertical levels at a time, so
+    peak memory stays bounded for very large grids (a 100-m d3
+    `wrfout_d02` is 149 x 2290 x 2800, ~3.8 GB as float32 before masked-
+    array copies). Same result as a single whole-column read.
     """
     with netCDF4.Dataset(wrf_file) as nc:
-        values = np.nanmax(np.ma.filled(nc.variables[varname][0, ...], np.nan), axis=0)
+        var = nc.variables[varname]
+        values = None
+        for k in range(0, var.shape[1], levels_per_read):
+            chunk = np.nanmax(np.ma.filled(var[0, k:k + levels_per_read], np.nan), axis=0)
+            values = chunk if values is None else np.fmax(values, chunk)
         lon = np.ma.filled(nc.variables["XLONG"][0, ...], np.nan)
         lat = np.ma.filled(nc.variables["XLAT"][0, ...], np.nan)
         time_str = b"".join(nc.variables["Times"][0, :]).decode("utf-8")

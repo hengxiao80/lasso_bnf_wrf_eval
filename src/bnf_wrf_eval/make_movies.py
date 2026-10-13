@@ -9,6 +9,9 @@ group by that timestamp, and encodes it to
     python -m bnf_wrf_eval.make_movies --which comparison
     python -m bnf_wrf_eval.make_movies --which single --fps 12
 
+Frame rate: 12 fps, except 2 fps for the hourly types (`HOURLY_TYPES`); an
+explicit `--fps` applies to every movie.
+
 `--which` takes `comparison` (tb4, tb4_simple, refl3), `single` (the six single-panel
 types), `all`, or a comma-separated list of type names. `--task-index` /
 `--task-count` (or the SLURM job-array env vars) slice the movie list
@@ -35,13 +38,27 @@ DEFAULT_FRAMES_ROOT = "outputs/frames"
 DEFAULT_MOVIES_DIR = "outputs/movies"
 DEFAULT_FPS = 12
 
+# Frame types with one frame per hour (HRRR's cadence, or hourly lightning
+# windows). DEFAULT_FPS suits the 15-min / 5-min series; at 12 fps an hourly
+# movie runs too fast to follow (a 73-frame d1 movie in ~6 s, a d3 one in
+# 1-2 s), so these get HOURLY_FPS -- half a second per frame. Includes
+# `run_compare`'s hourly `panels_*` types.
+HOURLY_FPS = 2
+HOURLY_TYPES = {
+    "tb4", "tb4_simple", "refl3", "hrrr_tb", "hrrr_refl",
+    "d2_tb4", "d2_refl4", "d3_tb4", "d3_refl4",
+    "lightning_cg", "lightning_total",
+    "panels_tb", "panels_refl",
+}
+
 GROUPS = {
     "comparison": ["tb4", "tb4_simple", "refl3"],
     "single": ["wrf_tb", "wrf_refl", "wrf_olr_tb", "hrrr_tb", "hrrr_refl", "goes_tb", "mrms_refl"],
     "d2": ["d2_tb4", "d2_refl4"],
+    "d3": ["d3_tb4", "d3_refl4"],
     "lightning": ["lightning_cg", "lightning_total"],
 }
-GROUPS["all"] = GROUPS["comparison"] + GROUPS["single"] + GROUPS["d2"] + GROUPS["lightning"]
+GROUPS["all"] = GROUPS["comparison"] + GROUPS["single"] + GROUPS["d2"] + GROUPS["d3"] + GROUPS["lightning"]
 
 # Frame types rendered on a black background (`plotting.py`'s
 # `dark_background=True` default for the lightning comparisons) --
@@ -132,7 +149,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="comparison | single | all | comma-separated type names")
     p.add_argument("--frames-root", default=DEFAULT_FRAMES_ROOT)
     p.add_argument("--movies-dir", default=DEFAULT_MOVIES_DIR)
-    p.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    p.add_argument("--fps", type=int, default=None,
+                   help=f"frames per second for every movie (default: {DEFAULT_FPS}, "
+                        f"or {HOURLY_FPS} for HOURLY_TYPES)")
     p.add_argument("--overwrite", action="store_true")
     p.add_argument("--task-index", type=int, default=None)
     p.add_argument("--task-count", type=int, default=None)
@@ -180,7 +199,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"MAKE  {name}  ({len(frames)} frames)", flush=True)
         try:
             bg_color = "black" if ptype in DARK_TYPES else "white"
-            encode_movie(frames, out_path, args.fps, bg_color=bg_color)
+            fps = args.fps or (HOURLY_FPS if ptype in HOURLY_TYPES else DEFAULT_FPS)
+            encode_movie(frames, out_path, fps, bg_color=bg_color)
             n_ok += 1
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL  {name}: {exc!r}", flush=True)

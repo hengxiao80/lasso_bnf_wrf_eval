@@ -1,18 +1,23 @@
 # BNF WRF evaluation movies
 
 Animated comparisons of the WRF LASSO BNF test runs (Satoshi's `hrrr3` runs — the
-d1 (2.5-km) runs and the d2 (500-m) runs nested into them via `ndown`) against the
+d1 (2.5-km) runs, the d2 (500-m) runs nested into them via `ndown`, and the d3 (100-m)
+runs nested online inside d2) against the
 HRRR analyses that drove them and against independent satellite / radar
 observations, for the DOE ARM Bankhead National Forest (BNF) site in northern
 Alabama.
 
-All 90 movies (72 d1 + 12 d2 + 6 lightning) are H.264 (`yuv420p`), **12 fps, no
-audio**. At 12 fps an hourly (73-frame) movie runs ~6 s, a 15-min (289-frame)
-movie ~24 s, and the 5-min GOES movies (~865 frames) ~72 s. The d2 comparison
-movies are hourly and shorter (15–24 frames — those runs cover only 14–23 h;
-see below). The lightning movies are hourly and 72 frames (one shorter than a
-normal 73-frame hourly movie, since each frame differences *two* consecutive
-hours and the run's last hour has no successor to pair with; see below).
+All 96 movies (72 d1 + 12 d2 + 6 d3 + 6 lightning) are H.264 (`yuv420p`), no audio.
+Frame rate depends on the time step between frames:
+
+- **Hourly movies, 2 fps** (half a second per hour): the d1 comparison movies (73
+  frames, ~36 s), the HRRR single-panel movies (73 frames, ~36 s), the d2 (15–24
+  frames — those runs cover only 14–23 h; see below) and d3 (13–21 frames) comparison
+  movies (~6.5–12 s), and the lightning movies (72 frames, ~36 s — one shorter than a
+  normal hourly movie, since each frame differences *two* consecutive hours and the
+  run's last hour has no successor to pair with; see below).
+- **15-min and 5-min movies, 12 fps**: the WRF and MRMS single-panel movies (289
+  frames, ~24 s) and the GOES movies (~865 frames, ~72 s).
 
 ## The runs
 
@@ -64,6 +69,22 @@ Unlike the 72-hour d1 runs, these d2 runs cover only part of each case period
 | `20250520` | 05-20 12Z – 05-21 05Z | 18 |
 | `20250917` | 09-17 10Z – 09-18 00Z | 15 |
 
+### d3 (100-m) runs
+
+`rund2d3` (one per case) runs the 500-m d2 domain (ndown-forced, as `rund2`) together
+with a **100-m domain nested in it online** (one-way, `feedback = 0`). WRF numbers
+domains within the run, so the 500-m domain is `wrfout_d01_*` and the 100-m domain
+(the project's "d3") is `wrfout_d02_*`. d3 starts 2 h after d2. The d2 panel in these
+movies is this run's own 500-m domain (d3's actual parent), **not** `rund2`: the two
+runs' 500-m fields are identical until d3 starts and then diverge (cause not yet
+understood).
+
+| Case | d3 period (UTC) | hourly frames |
+|------|-----------------|---------------|
+| `20250502` | 05-02 09Z – 05-03 06Z | 21 (no 11Z: d2 output missing at a restart) |
+| `20250520` | 05-20 14Z – 05-21 05Z | 15 (no 22Z: same reason) |
+| `20250917` | 09-17 12Z – 09-18 00Z | 13 |
+
 ## Reference data
 
 - **GOES**: GOES-19 ABI channel 13 (10.3 µm "clean window" IR) brightness
@@ -113,7 +134,7 @@ all frames so the animations do not flicker:
 
 ## Movie inventory
 
-### Comparison movies (hourly, 73 frames each) — 27 files
+### Comparison movies (hourly, 73 frames each, 2 fps) — 27 files
 
 | File pattern | Layout |
 |--------------|--------|
@@ -145,7 +166,7 @@ only on the case, not on the microphysics run, so their filenames have no run ta
 Their suptitle carries the field's *actual* valid/scan time (e.g. a GOES frame
 labelled 20:02 is the scan nearest the requested 20:00).
 
-### d2 (500-m) comparison movies (hourly, 15–24 frames each) — 12 files
+### d2 (500-m) comparison movies (hourly, 15–24 frames each, 2 fps) — 12 files
 
 2×2 layout: **d2 (500 m WRF) | d1 (2.5 km WRF)** on top, **HRRR | independent
 observation** below. All on the d2 domain's projection / extent, d2 footprint
@@ -159,7 +180,19 @@ outlined in red, BNF star on every panel.
 6 of each (3 cases × `rund2` / `rund2-dynlit`). Frame counts per case: 24
 (`20250502`), 18 (`20250520`), 15 (`20250917`).
 
-### Lightning movies (hourly, 72 frames each) — 6 files
+### d3 (100-m) comparison movies (hourly, 13–21 frames each, 2 fps) — 6 files
+
+2×2 layout: **d3 (100 m WRF) | d2 (500 m WRF, same `rund2d3` run)** on top, **HRRR |
+independent observation** below (no d1 panel). All on the d3 domain's projection,
+extent = d3 footprint padded by 0.25° (half the d1/d2 padding), d3 footprint outlined
+in red, BNF star on every panel.
+
+| File pattern | Layout |
+|--------------|--------|
+| `d3_olr_tb_4panel_<case>_rund2d3.mp4` | Brightness temperature, **OLR-fit for all three model panels** (d3 \| d2 \| HRRR), GOES observed bottom-right — no CRTM |
+| `d3_refl_4panel_<case>_rund2d3.mp4` | Reflectivity: WRF d3 column-max \| WRF d2 column-max \| HRRR `refc` \| MRMS composite |
+
+### Lightning movies (hourly, 72 frames each, 2 fps) — 6 files
 
 WRF's dynamics-based lightning-threat diagnostic (`rund1-dynlit`,
 `dyn_lightning_option=1`; Lynn et al. 2012) against two independent observed
@@ -204,4 +237,5 @@ been done; see `prompts/lightning_evaluation.md`.
   `rund1-dynlit` (WRF single-panel movies; d1 comparison movies are `rund1` /
   `rund1-mp52` / `rund1-mp53` only, and `rund1-dynlit` has only `wrf_olr_tb` /
   `wrf_refl`, plus both `lightning_*` movies, which are `rund1-dynlit` only).
-  For the `d2_*_4panel` movies: `rund2` or `rund2-dynlit`.
+  For the `d2_*_4panel` movies: `rund2` or `rund2-dynlit`; for the `d3_*_4panel`
+  movies: `rund2d3`.

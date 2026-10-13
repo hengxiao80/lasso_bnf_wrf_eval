@@ -230,9 +230,13 @@ def plot_pair(kind: str, when: dt.datetime, rs: RunSet, opts, out_file, pair, pa
     P._plot_panel(axes[0, 1], lo, la, show(vb), levels, cmap, extent, label(b, vb),
                   extend=extend, domain_outline=outline)
     d = va - vb
+    # pcolormesh, not contourf: a difference field is often fine-grained speckle of both
+    # signs, and contourf's thousands of tiny polygons then render with the last-drawn
+    # (positive) levels visually covering the negative ones -- a one-signed-looking map of
+    # a field whose positive and negative parts actually cancel.
     m2 = P._plot_panel(axes[0, 2], lo, la, d, dlevels, "BrBG" if kind not in ("tb", "refl") else "RdBu_r",
                        extent, f"{a} - {b}\nmean {np.nanmean(d):+,.2f}, RMS {np.sqrt(np.nanmean(d**2)):,.2f}",
-                       extend="both", domain_outline=outline)
+                       extend="both", domain_outline=outline, plot_type="pcolormesh")
     dunit = "K" if kind == "tb" else ("dBZ" if kind == "refl" else unit)
     fig.colorbar(m1, ax=list(axes[0, :2]), label=unit, shrink=0.8, pad=0.01)
     fig.colorbar(m2, ax=[axes[0, 2]], label=f"difference ({dunit})", shrink=0.8, pad=0.01)
@@ -509,7 +513,12 @@ def main(argv=None) -> int:
             if t in ("timeseries", "pair_timeseries"):
                 work.append((t, None, root / f"{t}{tag}.png", pair))
                 continue
-            for when in times_for(t)[1 if t == "pair_precip" else 0:]:  # rate needs the hour before
+            ts = times_for(t)
+            for when in ts:
+                # the precip rate needs the output PRECIP_WINDOW_MIN earlier (absent for the
+                # first time, and after any gap in a run's output)
+                if t == "pair_precip" and when - dt.timedelta(minutes=PRECIP_WINDOW_MIN) not in ts:
+                    continue
                 out = root / "frames" / t / f"{t}{tag}_{rs.case[:8]}_{when:%Y%m%d_%H%MZ}.png"
                 work.append((t, when, out, pair))
     idx = a.task_index if a.task_index is not None else (int(os.environ["SLURM_ARRAY_TASK_ID"]) if "SLURM_ARRAY_TASK_ID" in os.environ else None)

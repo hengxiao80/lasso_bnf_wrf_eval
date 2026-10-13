@@ -5,13 +5,16 @@
 #SBATCH --array=0-15
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=8G
 #SBATCH --time=02:00:00
 #SBATCH --output=/gpfs/wolf2/arm/cli120/scratch/hengxiao80/bnf_run_compare_%A_%a.out
 #
 # Multi-run comparison frames / time series (bnf_wrf_eval.run_compare).
 # Task k renders worklist[k::N]; restartable (existing frames skipped).
+# --cpus-per-task=16 is NOT for compute (each task is serial): it caps packing at 8 tasks per
+# 128-core node. With 2 cores, SLURM packed all 64 tasks of four arrays onto one node, whose
+# GPFS link then starved them -- a ~8 s frame took ~9 min (2026-10-12).
 #   sbatch scripts/run_compare.sbatch            # default: panels + every pair field
 #   WHICH=timeseries,pair_timeseries sbatch --array=0-0 scripts/run_compare.sbatch   # serial, ~25 min
 # CONFIG= / OUTPUT_ROOT= / EXTRA= (extra run_compare flags) override the defaults.

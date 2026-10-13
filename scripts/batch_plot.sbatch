@@ -5,7 +5,7 @@
 #SBATCH --array=0-63%32
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=6G
 #SBATCH --time=04:00:00
 #SBATCH --output=/gpfs/wolf2/arm/cli120/scratch/hengxiao80/bnf_batch_plot_%A_%a.out
@@ -15,6 +15,11 @@
 # an even mix of plot types / case days / times per task). Restartable:
 # frames already on disk are skipped, so resubmitting the whole array
 # after a timeout or node failure just fills the gaps.
+#
+# --cpus-per-task=16 is NOT for compute (each task is serial): it caps packing at 8 tasks per
+# 128-core node. With 2 cores, SLURM packed the whole array onto one node, whose GPFS link
+# then starved every task reading 3-D fields -- e.g. the d3 reflectivity frames (job 1051284)
+# took ~410 s each vs. ~16 s alone (2026-10-12). 2-D-only frames (OLR Tb) were unaffected.
 #
 # Pre-download the GOES/MRMS observation files FIRST so tasks don't all hit
 # S3 (and race on the same missing path):

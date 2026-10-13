@@ -1,0 +1,22 @@
+{
+  "case": "20250917lassobnfwrfhrrr3",
+  "ref_run": "rund2",
+  "runs": [
+    {
+      "name": "rund2",
+      "label": "rund2 (500 m only)",
+      "dir": "satoshi_testruns/20250917lassobnfwrfhrrr3/rund2"
+    },
+    {
+      "name": "rund2d3",
+      "label": "rund2d3 (500 m, with 100-m nest)",
+      "dir": "satoshi_testruns/20250917lassobnfwrfhrrr3/rund2d3"
+    }
+  ],
+  "pairs": [
+    [
+      "rund2d3",
+      "rund2"
+    ]
+  ]
+}

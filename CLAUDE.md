@@ -81,6 +81,42 @@ directory; `plotting._D2_TO_D1_RUN`), or take an explicit `d1_run_dir=`.
 Batch-rendered via `bnf_wrf_eval.batch_plot` types `d2_tb4` / `d2_refl4` (group `d2`, scope `d2run`), hourly
 (HRRR's cadence, so all four panels stay time-consistent). Task prompt: `prompts/d2_plots.md`.
 
+### d3 (100-m online-nested run) 4-panel comparisons
+
+For the `rund2d3` subdirs of the three `*hrrr3` case directories: the 500-m domain (ndown-forced from d1, as in
+`rund2`) run together with a 100-m domain nested in it online, one-way (`feedback = 0`). **WRF numbers domains
+within the run, so `wrfout_d01_*` is the 500-m domain (the project's "d2") and `wrfout_d02_*` is the 100-m domain
+(the project's "d3").** (`max_dom = 2` only counts domains; it says nothing about one- vs. two-way nesting.)
+Satoshi picked per-case start/end times, and d3 starts 2 h after d2 inside the same run (no restart -- WRF can
+start a nest later than its parent; restarts happened later, e.g. 0502's `xrun1`/`xrun2`). `rund2d3-coinit`
+(0917, d2 and d3 started together, ~2 h of output) is a short test and is not in the batch set.
+
+Layout: **d3 (100 m) | d2 (500 m) on top, HRRR | independent observation below** (no d1 panel), on the shared
+Lambert projection, extent = d3 footprint padded by `domain_pad_deg` (0.25 -- half the d1/d2 plots' 0.5, since d3 is much
+smaller; stays inside d2; longitude gridlines pinned to 1 deg via `lon_grid_step` so labels don't collide), **d3 domain
+outlined in red**, BNF starred. `plotting.plot_d3_{tb,refl}_comparison_4panel` /
+`plot_run_d3_{tb,refl}_comparison_4panel` (the run wrappers take the `rund2d3` dir; `d3_domain="d02"`,
+`d2_domain="d01"`). The d2 and d3 plotters share `plotting._nested_four_panel`.
+
+- **Tb is OLR-derived for every model panel (d3, d2, HRRR), same as the d2 plots and unlike d1's CRTM-based
+  `tb4` / `wrf_tb`.** GOES is the only observed Tb. Reflectivity: column-max `REFL_10CM` | HRRR `refc` | MRMS.
+- **The d2 panel comes from `rund2d3`'s own `wrfout_d01` (d3's actual parent), not from `rund2`.** The two
+  runs' 500-m fields are bit-identical until d3 starts and then differ almost everywhere within one output
+  interval (checked 2026-10-12, all three cases), even though one-way nesting shouldn't feed back. The cause
+  is not yet understood (to be looked into); until then, don't treat `rund2` and `rund2d3` d01 as
+  interchangeable after the d3 start.
+
+Batch-rendered via `batch_plot` types `d3_tb4` / `d3_refl4` (group `d3`, scope `d3run` -> `D3_SCHEMES`),
+hourly. Frame times are the hourly d3 times that also have a d2 file -- `rund2d3` is missing a few on-the-hour
+d01 outputs at restart boundaries (0502 11Z, 0520 22Z) -- giving 49 times (0502: 21, 0520: 15, 0917: 13). A
+100-m `wrfout_d02` has 149 x 2290 x 2800 `REFL_10CM`, so `wrf.read_column_max_reflectivity` now takes the
+max over chunks of levels (`levels_per_read`, identical result); a d3 frame renders in ~12-16 s at ~2 GB peak.
+
+Regenerate (obs files for these hours are already local): `WHICH=d3 sbatch --array=0-48%32
+scripts/batch_plot.sbatch`, then `python -m bnf_wrf_eval.make_movies --which d3`. One-time full run
+(2026-10-12): array job 1051284, 98/98 frames, 0 failures, ~11 min; 6 movies in `outputs/movies/d3_*.mp4`. Encoded at 2 fps, like every hourly movie (see
+`make_movies.py` under "Structure").
+
 ## Environment and commands
 
 Package management is via `uv` (build backend `uv_build`, package layout under `src/`).
@@ -311,8 +347,9 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
     both the hourly comparison frames (`tb4`, `tb4_simple`, `refl3`), the seven single-panel series (`wrf_tb`,
     `wrf_refl`, `wrf_olr_tb`, `hrrr_tb`, `hrrr_refl`, `goes_tb`, `mrms_refl`), and the two d2 (500-m) hourly
     4-panel comparisons (`d2_tb4`, `d2_refl4`; group `d2`, scope `d2run`, iterating `D2_SCHEMES` = `rund2` /
-    `rund2-dynlit` x the three `*hrrr3` cases -- see "d2 (500-m ndown run) 4-panel comparisons" above), and the
-    two hourly lightning comparisons (`lightning_cg`, `lightning_total`; group `lightning`, scope `dynlit` ->
+    `rund2-dynlit` x the three `*hrrr3` cases -- see "d2 (500-m ndown run) 4-panel comparisons" above), the
+    two d3 (100-m) hourly 4-panel comparisons (`d3_tb4`, `d3_refl4`; group `d3`, scope `d3run` -> `D3_SCHEMES` =
+    `rund2d3` -- see "d3 (100-m online-nested run) 4-panel comparisons" above), and the two hourly lightning comparisons (`lightning_cg`, `lightning_total`; group `lightning`, scope `dynlit` ->
     `DYNLIT_SCHEMES` = `rund1-dynlit` only, since it's the only scheme with `dyn_lightning_option=1` -- see
     "Lightning evaluation" below) into `<output-root>/frames/<type>/`.
     `wrf_olr_tb` (WRF's OLR-fit Tb, `wrf.read_brightness_temperature_from_olr`, on the shared Tb colour scale) is
@@ -329,8 +366,12 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
     in the filename before the trailing `_<YYYYMMDD_HHMM>Z.png` stamp, sorts by that stamp, pads each frame on
     white (or black, for `DARK_TYPES` -- the two lightning types, which render on a black background) to the
     group's max width/height (no rescale -- `bbox_inches="tight"` makes frame sizes vary by a few
-    px), and encodes H.264 (`yuv420p`, 12 fps) via `imageio` + `imageio-ffmpeg`'s bundled static ffmpeg (there is
+    px), and encodes H.264 (`yuv420p`) via `imageio` + `imageio-ffmpeg`'s bundled static ffmpeg (there is
     no system `ffmpeg` here). Run as `python -m bnf_wrf_eval.make_movies --which comparison|single|all|lightning`.
+    Frame rate: 12 fps for the 15-min / 5-min series, **2 fps for every hourly type** (`HOURLY_TYPES`:
+    `tb4`, `tb4_simple`, `refl3`, `hrrr_*`, `d2_*`, `d3_*`, lightning, and `run_compare`'s `panels_*`) -- at
+    12 fps a 73-frame hourly movie ran ~6 s and a d3 one 1-2 s. An explicit `--fps` applies to every movie.
+    All existing hourly movies (57 + the 2 DA `panels_*`) were re-encoded at 2 fps on 2026-10-13.
   - `plotting.py` -- the comparison plots described above (the d1 3-panel / 4-panel families *and* the d2
     `plot_d2_*_comparison_4panel` / `plot_run_d2_*_comparison_4panel` pair -- see "d2 (500-m ndown run) 4-panel
     comparisons" above, and note that d2's Tb plots are OLR-derived for every model panel, unlike d1's
@@ -400,7 +441,10 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
     `--mrms-dir`, GLM shares `--goes-dir`.
   - `batch_plot.sbatch` -- 64-task SLURM array (32 concurrent) driving `bnf_wrf_eval.batch_plot`; `WHICH=`
     (comparison | single | all | type list), `OUTPUT_ROOT=`, `EXTRA=` overrides. Restartable (skips existing
-    frames). ~52 s/frame for the 4-panel `tb4` under 32-wide packing (the `ctt` diagnostic dominates), a few
+    frames). **Both this and `run_compare.sbatch` request `--cpus-per-task=16` only to cap packing at 8
+    tasks per 128-core node** (tasks are serial): with 2 cores SLURM packed a whole array onto one node and its
+    GPFS link starved every task reading 3-D fields (reflectivity frames ~25-60x slower; 2026-10-12, d3 job
+    1051284 and the first `rund2` vs `rund2d3` run). The per-frame timings below predate this fix. ~52 s/frame for the 4-panel `tb4` under 32-wide packing (the `ctt` diagnostic dominates), a few
     seconds for the single-panel types.
   The CRTM `.sbatch`/probe scripts must use the *main checkout's* `.venv` explicitly (`pyCRTM` is installed only
   there, and `uv run` from a git worktree silently creates a fresh empty venv); the two CRTM `.sbatch` files take
@@ -452,6 +496,17 @@ Output under `outputs/compare/<case>/` (`frames/<type>/`, `movies/`); `scripts/r
 (`WHICH=`, `EXTRA=--overwrite`). Movies:
 `make_movies --which pair_tb,pair_refl --frames-root outputs/compare/<case>/frames --movies-dir outputs/compare/<case>/movies`.
 
+Difference panels are drawn with `pcolormesh`, not `contourf` (fixed 2026-10-12): for fine-grained two-signed
+speckle, `contourf`'s many tiny polygons rendered with the later-drawn positive levels covering the negative ones,
+so a difference field whose positive and negative areas cancel looked one-signed. The 2025-05-20 DA `pair_*` frames
+and movies were re-rendered with the fix.
+
+`rund2` vs `rund2d3` (500-m domain alone vs. the same domain run with the 100-m d3 nest; `configs/rund2_vs_rund2d3_
+<case>.json`, pair `rund2d3 - rund2`, all 8 pair fields + `timeseries` + `pair_timeseries`) is written to its own
+`--output-root outputs/rund2_vs_rund2d3` so its fixed-name `timeseries_stats.npz` caches don't collide with the
+2025-05-20 DA set under `outputs/compare/`. Inputs checked byte-identical (`wrfinput_d01`, `wrfbdy_d01`, same
+`wrf.exe`); the runs are bit-identical until d3 starts, then diverge (see the d3 section above).
+
 **IMPORTANT -- Tb here is OLR-derived for every model panel (WRF and HRRR), like the d2 plots and unlike d1
 `tb4`.** No CRTM; the models run ~8-10 K warm vs. GOES ch.13 in the domain mean. Use for run-vs-run comparison and
 pattern, not absolute Tb. Finding (2025-05-20): `hybrid2` is bit-identical to sey's `rund1-dynlit` (RMS diff 0).
@@ -486,7 +541,13 @@ Two families:
   CONUS 5 min per case (~865 frames -> 3 movies); `mrms_refl` at 15 min per case (289 frames -> 3 movies). 45
   single-panel movies.
 
-72 movies total, H.264 12 fps, in `outputs/movies/<frame-prefix>.mp4`; frames in `outputs/frames/<type>/`.
+72 movies total, H.264 (hourly ones at 2 fps, 15-min / 5-min ones at 12 fps), in `outputs/movies/<frame-prefix>.mp4`; frames in `outputs/frames/<type>/`.
+
+Sharing: the user copies the movies to their work OneDrive (on a Mac laptop) and shares them from there.
+Pushing from the cluster (rclone) is blocked by the workplace's Microsoft 365 tenant, so pull from the laptop
+instead (run on the Mac; copy-only, re-runs skip unchanged files; fix the `OneDrive-<Org>` folder name):
+
+    rsync -av --include='*.mp4' --include='README.md' --exclude='*' hengxiao80@cirrus-login1.ccs.ornl.gov:/gpfs/wolf2/arm/cli120/proj-shared/hengxiao80/bnf_wrf_eval/outputs/movies/ "$HOME/Library/CloudStorage/OneDrive-<Org>/BNF WRF movies/"
 
 Regenerate (from a login node -- the download step needs internet, see the compute-node note under `plotting.py`):
 
