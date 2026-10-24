@@ -46,7 +46,7 @@ DEFAULT_FPS = 12
 HOURLY_FPS = 2
 HOURLY_TYPES = {
     "tb4", "tb4_simple", "refl3", "hrrr_tb", "hrrr_refl",
-    "d2_tb4", "d2_refl4", "d3_tb4", "d3_refl4",
+    "d2_tb4", "d2_refl4", "d3_tb4", "d3_refl4", "d2hrrr_tb4", "d2hrrr_refl4",
     "lightning_cg", "lightning_total",
     "panels_tb", "panels_refl",
 }
@@ -56,9 +56,13 @@ GROUPS = {
     "single": ["wrf_tb", "wrf_refl", "wrf_olr_tb", "hrrr_tb", "hrrr_refl", "goes_tb", "mrms_refl"],
     "d2": ["d2_tb4", "d2_refl4"],
     "d3": ["d3_tb4", "d3_refl4"],
+    "d2hrrr": ["d2hrrr_tb4", "d2hrrr_refl4"],
     "lightning": ["lightning_cg", "lightning_total"],
 }
-GROUPS["all"] = GROUPS["comparison"] + GROUPS["single"] + GROUPS["d2"] + GROUPS["d3"] + GROUPS["lightning"]
+GROUPS["all"] = (
+    GROUPS["comparison"] + GROUPS["single"] + GROUPS["d2"] + GROUPS["d3"] + GROUPS["d2hrrr"]
+    + GROUPS["lightning"]
+)
 
 # Frame types rendered on a black background (`plotting.py`'s
 # `dark_background=True` default for the lightning comparisons) --

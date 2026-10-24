@@ -117,6 +117,29 @@ scripts/batch_plot.sbatch`, then `python -m bnf_wrf_eval.make_movies --which d3`
 (2026-10-12): array job 1051284, 98/98 frames, 0 failures, ~11 min; 6 movies in `outputs/movies/d3_*.mp4`. Encoded at 2 fps, like every hourly movie (see
 `make_movies.py` under "Structure").
 
+### d2 (500-m) free-run- vs. HRRR-driven 4-panel comparisons
+
+The `rund2` subdirs of the three `*hrrr4` case directories (`2025{0502,0520,0917}lassobnfwrfhrrr4/rund2`) are
+500-m runs on the **same grid** as `*hrrr3/rund2` (checked 2026-10-21: `XLAT`/`XLONG` and their staggered
+versions agree to 3e-5 deg, float32 round-off; same projection, `dx`, `mp_physics=28`, same 15-min output times),
+but driven at the lateral boundaries **directly by hourly HRRRv4 analyses** (`interval_seconds = 3600`) instead of
+ndown-forced from the free-running d1 (`*hrrr3/rund2`, `interval_seconds = 900`). "Free-run-driven d2" =
+`*hrrr3/rund2`; "HRRR-driven d2" = `*hrrr4/rund2`. (The `*hrrr4` dirs also have a `rund2d3`; not plotted yet.)
+
+Layout: **free-run-driven d2 | HRRR-driven d2 on top, HRRR | independent observation below**, otherwise exactly
+the d2 plots' conventions (d2 projection, d2 footprint padded 0.5 deg, d2 outline in red, BNF starred, figsize
+12.6x7.9). `plotting.plot_d2_forcing_{tb,refl}_comparison_4panel` / `plot_run_d2_forcing_*` (the run wrappers
+take the HRRR-driven run dir and resolve the free-run one via `plotting._HRRR_DRIVEN_TO_FREE_CASE`, `hrrr4` ->
+`hrrr3`, or an explicit `free_run_dir=`). **Tb is OLR-derived for every model panel, like the d2/d3 plots** (no
+CRTM); reflectivity is column-max `REFL_10CM` | `REFL_10CM` | HRRR `refc` | MRMS.
+
+Batch-rendered via `batch_plot` types `d2hrrr_tb4` / `d2hrrr_refl4` (group and scope `d2hrrr`, iterating
+`D2HRRR_CASES` x `D2HRRR_SCHEMES` = `rund2`), hourly, at the times both runs have: 57 per type (0502: 24, 0520:
+18, 0917: 15). Frames are `d2_free_vs_hrrr_{olr_tb,refl}_4panel_<case>hrrr4_rund2_<stamp>Z.png`. Regenerate (obs
+already local): `WHICH=d2hrrr sbatch scripts/batch_plot.sbatch`, then `python -m bnf_wrf_eval.make_movies --which
+d2hrrr`. One-time full run (2026-10-21): array job 1054840, 114/114 frames, 0 failures, ~2 min; 6 movies (2 fps) in
+`outputs/movies/d2_free_vs_hrrr_*.mp4`. Test frames: `outputs/d2hrrr_test/`.
+
 ## Environment and commands
 
 Package management is via `uv` (build backend `uv_build`, package layout under `src/`).
@@ -349,7 +372,10 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
     4-panel comparisons (`d2_tb4`, `d2_refl4`; group `d2`, scope `d2run`, iterating `D2_SCHEMES` = `rund2` /
     `rund2-dynlit` x the three `*hrrr3` cases -- see "d2 (500-m ndown run) 4-panel comparisons" above), the
     two d3 (100-m) hourly 4-panel comparisons (`d3_tb4`, `d3_refl4`; group `d3`, scope `d3run` -> `D3_SCHEMES` =
-    `rund2d3` -- see "d3 (100-m online-nested run) 4-panel comparisons" above), and the two hourly lightning comparisons (`lightning_cg`, `lightning_total`; group `lightning`, scope `dynlit` ->
+    `rund2d3` -- see "d3 (100-m online-nested run) 4-panel comparisons" above), the two free-run- vs.
+    HRRR-driven d2 hourly 4-panel comparisons (`d2hrrr_tb4`, `d2hrrr_refl4`; group and scope `d2hrrr` ->
+    `D2HRRR_CASES` x `D2HRRR_SCHEMES` -- see "d2 (500-m) free-run- vs. HRRR-driven 4-panel comparisons"
+    above), and the two hourly lightning comparisons (`lightning_cg`, `lightning_total`; group `lightning`, scope `dynlit` ->
     `DYNLIT_SCHEMES` = `rund1-dynlit` only, since it's the only scheme with `dyn_lightning_option=1` -- see
     "Lightning evaluation" below) into `<output-root>/frames/<type>/`.
     `wrf_olr_tb` (WRF's OLR-fit Tb, `wrf.read_brightness_temperature_from_olr`, on the shared Tb colour scale) is
@@ -369,7 +395,7 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
     px), and encodes H.264 (`yuv420p`) via `imageio` + `imageio-ffmpeg`'s bundled static ffmpeg (there is
     no system `ffmpeg` here). Run as `python -m bnf_wrf_eval.make_movies --which comparison|single|all|lightning`.
     Frame rate: 12 fps for the 15-min / 5-min series, **2 fps for every hourly type** (`HOURLY_TYPES`:
-    `tb4`, `tb4_simple`, `refl3`, `hrrr_*`, `d2_*`, `d3_*`, lightning, and `run_compare`'s `panels_*`) -- at
+    `tb4`, `tb4_simple`, `refl3`, `hrrr_*`, `d2_*`, `d3_*`, `d2hrrr_*`, lightning, and `run_compare`'s `panels_*`) -- at
     12 fps a 73-frame hourly movie ran ~6 s and a d3 one 1-2 s. An explicit `--fps` applies to every movie.
     All existing hourly movies (57 + the 2 DA `panels_*`) were re-encoded at 2 fps on 2026-10-13.
   - `plotting.py` -- the comparison plots described above (the d1 3-panel / 4-panel families *and* the d2

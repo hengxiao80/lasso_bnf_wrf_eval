@@ -93,6 +93,20 @@ D3_SCHEMES = {
 D3_DOMAIN = "d02"
 D3_PARENT_DOMAIN = "d01"
 
+# The 500-m runs driven directly by hourly HRRRv4 analyses, for the
+# "d2hrrr"-scope 4-panel comparisons against the free-run-driven (ndown from
+# d1) `*hrrr3/rund2` on the same grid -- resolved by
+# `plotting._HRRR_DRIVEN_TO_FREE_CASE` (hrrr4 -> hrrr3). Frame times are the
+# hourly times both runs have.
+D2HRRR_CASES = [
+    "20250502lassobnfwrfhrrr4",
+    "20250520lassobnfwrfhrrr4",
+    "20250917lassobnfwrfhrrr4",
+]
+D2HRRR_SCHEMES = {
+    "rund2": "500-m (D2) Thompson: free-run- vs HRRR-driven",
+}
+
 # Only `rund1-dynlit` has `dyn_lightning_option=1` (LPOS/LNEG/LNEU); the
 # other three `SCHEMES` entries would raise KeyError from
 # `wrf.read_dyn_lightning_flash_counts` immediately. A separate one-entry
@@ -110,7 +124,8 @@ PAIRED_TYPES = {"lightning_cg", "lightning_total"}
 # type -> (scope, cadence-minutes, output-filename prefix). scope "run"
 # iterates every case x d1 scheme; "case" iterates case days only; "d2run"
 # iterates every case x d2 scheme (D2_SCHEMES); "d3run" every case x d3
-# scheme (D3_SCHEMES).
+# scheme (D3_SCHEMES); "d2hrrr" every HRRR-driven case (D2HRRR_CASES) x
+# D2HRRR_SCHEMES.
 TYPES: dict[str, tuple[str, int, str]] = {
     "tb4": ("run", 60, "wrf_ctt_crtm_hrrr_goes_tb_comparison"),
     "tb4_simple": ("run", 60, "wrf_simple_tb_crtm_hrrr_goes_tb_comparison"),
@@ -130,6 +145,10 @@ TYPES: dict[str, tuple[str, int, str]] = {
     # OLR-derived for every model panel like d2.
     "d3_tb4": ("d3run", 60, "d3_olr_tb_4panel"),
     "d3_refl4": ("d3run", 60, "d3_refl_4panel"),
+    # d2 (500-m) free-run-driven | HRRR-driven | HRRR | obs, hourly, Tb
+    # OLR-derived for every model panel like d2.
+    "d2hrrr_tb4": ("d2hrrr", 60, "d2_free_vs_hrrr_olr_tb_4panel"),
+    "d2hrrr_refl4": ("d2hrrr", 60, "d2_free_vs_hrrr_refl_4panel"),
     # WRF (rund1-dynlit only) vs. observed lightning, hourly-accumulated
     # flash counts. scope "dynlit" -> DYNLIT_SCHEMES (just rund1-dynlit);
     # `when` is each window's *start* time (see PAIRED_TYPES above).
@@ -141,6 +160,7 @@ GROUPS = {
     "single": ["wrf_tb", "wrf_refl", "wrf_olr_tb", "hrrr_tb", "hrrr_refl", "goes_tb", "mrms_refl"],
     "d2": ["d2_tb4", "d2_refl4"],
     "d3": ["d3_tb4", "d3_refl4"],
+    "d2hrrr": ["d2hrrr_tb4", "d2hrrr_refl4"],
     "lightning": ["lightning_cg", "lightning_total"],
     "all": list(TYPES),
 }
@@ -168,10 +188,10 @@ def apply_runs_config(path: str | Path, domain: str = DEFAULT_DOMAIN) -> None:
     Scheme keys are the run dirs' basenames (what `_render` looks labels up
     by), so they must be unique. The d2 / d3 / dyn-lightning scopes are
     emptied -- they assume the built-in layout and dyn-lightning output."""
-    global CASES, SCHEMES, D2_SCHEMES, D3_SCHEMES, DYNLIT_SCHEMES
+    global CASES, SCHEMES, D2_SCHEMES, D3_SCHEMES, D2HRRR_SCHEMES, DYNLIT_SCHEMES
     rs = load_runset(path, domain)
     CASES = [rs.case]
-    SCHEMES, D2_SCHEMES, D3_SCHEMES, DYNLIT_SCHEMES = {}, {}, {}, {}
+    SCHEMES, D2_SCHEMES, D3_SCHEMES, D2HRRR_SCHEMES, DYNLIT_SCHEMES = {}, {}, {}, {}, {}
     RUN_DIRS.clear()
     for name, d in rs.runs.items():
         if d.name in SCHEMES:
@@ -247,16 +267,23 @@ def build_worklist(
         scope, cadence, prefix = TYPES[ptype]
         out_dir = frames_root / ptype
 
-        if scope in ("run", "d2run", "d3run", "dynlit"):
+        if scope in ("run", "d2run", "d3run", "d2hrrr", "dynlit"):
             schemes = {
-                "run": SCHEMES, "d2run": D2_SCHEMES, "d3run": D3_SCHEMES, "dynlit": DYNLIT_SCHEMES,
+                "run": SCHEMES, "d2run": D2_SCHEMES, "d3run": D3_SCHEMES,
+                "d2hrrr": D2HRRR_SCHEMES, "dynlit": DYNLIT_SCHEMES,
             }[scope]
-            for case in CASES:
+            cases = D2HRRR_CASES if scope == "d2hrrr" else CASES
+            for case in cases:
                 for scheme in schemes:
                     run_dir = _run_dir(runs_root, case, scheme)
                     if scope == "d3run":
                         parent = set(_wrf_times(run_dir, D3_PARENT_DOMAIN, cadence))
                         times = [t for t in _wrf_times(run_dir, D3_DOMAIN, cadence) if t in parent]
+                    elif scope == "d2hrrr":
+                        from .plotting import _resolve_free_d2_run_dir
+
+                        free = set(_wrf_times(_resolve_free_d2_run_dir(run_dir, None), domain, cadence))
+                        times = [t for t in _wrf_times(run_dir, domain, cadence) if t in free]
                     else:
                         times = _wrf_times(run_dir, domain, cadence)
                     if ptype in PAIRED_TYPES and times:
@@ -362,6 +389,20 @@ def _render(item: tuple, opts: argparse.Namespace) -> None:
                 when, D3_SCHEMES[Path(key).name], key,
                 hrrr_base_dir=opts.hrrr_dir, mrms_dir=opts.mrms_dir,
                 d3_domain=D3_DOMAIN, d2_domain=D3_PARENT_DOMAIN, out_file=out_path,
+                auto_download_mrms=opts.auto_download,
+            )
+        elif ptype == "d2hrrr_tb4":
+            plotting.plot_run_d2_forcing_tb_comparison_4panel(
+                when, D2HRRR_SCHEMES[Path(key).name], key,
+                hrrr_base_dir=opts.hrrr_dir, goes_dir=opts.goes_dir,
+                domain=opts.domain, out_file=out_path,
+                auto_download_goes=opts.auto_download,
+            )
+        elif ptype == "d2hrrr_refl4":
+            plotting.plot_run_d2_forcing_refl_comparison_4panel(
+                when, D2HRRR_SCHEMES[Path(key).name], key,
+                hrrr_base_dir=opts.hrrr_dir, mrms_dir=opts.mrms_dir,
+                domain=opts.domain, out_file=out_path,
                 auto_download_mrms=opts.auto_download,
             )
         elif ptype == "lightning_cg":

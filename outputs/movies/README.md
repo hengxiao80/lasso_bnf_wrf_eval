@@ -2,18 +2,21 @@
 
 Animated comparisons of the WRF LASSO BNF test runs (Satoshi's `hrrr3` runs — the
 d1 (2.5-km) runs, the d2 (500-m) runs nested into them via `ndown`, and the d3 (100-m)
-runs nested online inside d2) against the
+runs nested online inside d2 — plus the `hrrr4` 500-m runs driven directly by hourly
+HRRRv4 analyses) against the
 HRRR analyses that drove them and against independent satellite / radar
 observations, for the DOE ARM Bankhead National Forest (BNF) site in northern
 Alabama.
 
-All 96 movies (72 d1 + 12 d2 + 6 d3 + 6 lightning) are H.264 (`yuv420p`), no audio.
+All 102 movies (72 d1 + 12 d2 + 6 d2 free-run- vs. HRRR-driven + 6 d3 + 6 lightning)
+are H.264 (`yuv420p`), no audio.
 Frame rate depends on the time step between frames:
 
 - **Hourly movies, 2 fps** (half a second per hour): the d1 comparison movies (73
   frames, ~36 s), the HRRR single-panel movies (73 frames, ~36 s), the d2 (15–24
-  frames — those runs cover only 14–23 h; see below) and d3 (13–21 frames) comparison
-  movies (~6.5–12 s), and the lightning movies (72 frames, ~36 s — one shorter than a
+  frames — those runs cover only 14–23 h; see below), d2 free-run- vs. HRRR-driven
+  (same 15–24 frames) and d3 (13–21 frames) comparison movies (~6.5–12 s), and the
+  lightning movies (72 frames, ~36 s — one shorter than a
   normal hourly movie, since each frame differences *two* consecutive hours and the
   run's last hour has no successor to pair with; see below).
 - **15-min and 5-min movies, 12 fps**: the WRF and MRMS single-panel movies (289
@@ -68,6 +71,15 @@ Unlike the 72-hour d1 runs, these d2 runs cover only part of each case period
 | `20250502` | 05-02 07Z – 05-03 06Z | 24 |
 | `20250520` | 05-20 12Z – 05-21 05Z | 18 |
 | `20250917` | 09-17 10Z – 09-18 00Z | 15 |
+
+### HRRR-driven d2 (500-m) runs
+
+The `hrrr4` case directories each have a `rund2` on **the same 500-m grid** as the
+`hrrr3` `rund2` (same projection, Thompson `mp_physics=28`, same output times and
+period as the table above), but with its lateral boundaries **driven directly by the
+hourly HRRRv4 analyses** instead of by the free-running 2.5-km d1 run via `ndown`.
+In these movies "free-run-driven d2" is `hrrr3/rund2` and "HRRR-driven d2" is
+`hrrr4/rund2`.
 
 ### d3 (100-m) runs
 
@@ -180,6 +192,20 @@ outlined in red, BNF star on every panel.
 6 of each (3 cases × `rund2` / `rund2-dynlit`). Frame counts per case: 24
 (`20250502`), 18 (`20250520`), 15 (`20250917`).
 
+### d2 free-run- vs. HRRR-driven comparison movies (hourly, 15–24 frames each, 2 fps) — 6 files
+
+2×2 layout: **free-run-driven d2 (500 m, `hrrr3/rund2`) | HRRR-driven d2 (500 m,
+`hrrr4/rund2`)** on top, **HRRR | independent observation** below. Same projection /
+extent / red d2 outline / BNF star as the d2 movies above.
+
+| File pattern | Layout |
+|--------------|--------|
+| `d2_free_vs_hrrr_olr_tb_4panel_<case>lassobnfwrfhrrr4_rund2.mp4` | Brightness temperature, **OLR-fit for all three model panels** (free-run-driven d2 \| HRRR-driven d2 \| HRRR), GOES observed bottom-right — no CRTM |
+| `d2_free_vs_hrrr_refl_4panel_<case>lassobnfwrfhrrr4_rund2.mp4` | Reflectivity: free-run-driven d2 column-max \| HRRR-driven d2 column-max \| HRRR `refc` \| MRMS composite |
+
+3 of each (one per case). Frame counts per case: 24 (`20250502`), 18 (`20250520`),
+15 (`20250917`).
+
 ### d3 (100-m) comparison movies (hourly, 13–21 frames each, 2 fps) — 6 files
 
 2×2 layout: **d3 (100 m WRF) | d2 (500 m WRF, same `rund2d3` run)** on top, **HRRR |
@@ -231,6 +257,7 @@ been done; see `prompts/lightning_evaluation.md`.
 ## Filename key
 
     <type>_<case>lassobnfwrfhrrr3[_<run>].mp4
+    d2_free_vs_hrrr_<field>_4panel_<case>lassobnfwrfhrrr4_rund2.mp4
 
 - `<case>` — `20250502`, `20250520`, or `20250917` (see tables above)
 - `<run>` — for the d1 movies: `rund1`, `rund1-mp52`, `rund1-mp53`, or
@@ -238,4 +265,6 @@ been done; see `prompts/lightning_evaluation.md`.
   `rund1-mp52` / `rund1-mp53` only, and `rund1-dynlit` has only `wrf_olr_tb` /
   `wrf_refl`, plus both `lightning_*` movies, which are `rund1-dynlit` only).
   For the `d2_*_4panel` movies: `rund2` or `rund2-dynlit`; for the `d3_*_4panel`
-  movies: `rund2d3`.
+  movies: `rund2d3`. The `d2_free_vs_hrrr_*` movies are named after the
+  HRRR-driven run (`hrrr4/rund2`); their free-run-driven panel is the same case's
+  `hrrr3/rund2`.

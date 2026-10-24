@@ -1116,6 +1116,229 @@ def plot_run_d2_refl_comparison_4panel(
 
 
 # ---------------------------------------------------------------------------
+# d2 (500-m) free-run- vs. HRRR-driven 4-panel comparisons
+#
+# Two 500-m runs on the same grid that differ only in what drives their
+# lateral boundaries: the `*hrrr3/rund2` run is ndown-forced (15-min) from
+# the free-running 2.5-km d1 run, the `*hrrr4/rund2` run directly by hourly
+# HRRRv4 analyses. One frame per output time, laid out as a 2x2 grid:
+#
+#     free-run-driven d2 (500 m)   |   HRRR-driven d2 (500 m)
+#     HRRR                         |   independent observation
+#
+# Same projection / extent / outline / BNF-marker conventions as the d2
+# plots above (the two d2 grids agree to float32 round-off), and like them
+# Tb is the OLR-derived Tb for all three model panels -- no CRTM.
+# ---------------------------------------------------------------------------
+
+# HRRR-driven case-dir suffix -> the free-run-driven one holding the
+# matching `rund2` (same case day, same 500-m grid).
+_HRRR_DRIVEN_TO_FREE_CASE = {"hrrr4": "hrrr3"}
+
+
+def plot_d2_forcing_tb_comparison_4panel(
+    free_d2_file: str | Path,
+    hrrr_d2_file: str | Path,
+    hrrr_file: str | Path,
+    goes_file: str | Path,
+    ctt_levels: np.ndarray = DEFAULT_CTT_LEVELS,
+    cmap: str | Colormap = DEFAULT_TB_CMAP,
+    domain_pad_deg: float = 0.5,
+    figsize: tuple[float, float] = (12.6, 7.9),
+    suptitle: str | None = None,
+    out_file: str | Path | None = None,
+):
+    """2x2 OLR-derived brightness-temperature comparison of two 500-m runs:
+    free-run-driven d2 | HRRR-driven d2 on top, HRRR | GOES ABI ch.13
+    (observed) below.
+
+    The three model panels all use the OLR-fit Tb
+    (`wrf.read_brightness_temperature_from_olr` /
+    `hrrr.read_brightness_temperature_from_olr`) -- no CRTM. See the module
+    comment above "d2 (500-m) free-run- vs. HRRR-driven 4-panel
+    comparisons"; parameters otherwise mirror `plot_d2_tb_comparison_4panel`.
+    """
+    free_lon, free_lat, free_tb, _ = wrf_reader.read_brightness_temperature_from_olr(free_d2_file)
+    hd2_lon, hd2_lat, hd2_tb, _ = wrf_reader.read_brightness_temperature_from_olr(hrrr_d2_file)
+    hrrr_lon, hrrr_lat, hrrr_tb, _ = hrrr_reader.read_brightness_temperature_from_olr(hrrr_file)
+    goes_lon, goes_lat, goes_tb, goes_time = goes_reader.read_brightness_temperature(goes_file)
+    proj = wrf_reader.get_lambert_projection(free_d2_file)
+
+    fig, axes = plt.subplots(
+        2, 2, figsize=figsize, subplot_kw={"projection": proj}, constrained_layout=True
+    )
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02)
+
+    _nested_four_panel(
+        fig, axes,
+        (free_lon, free_lat, free_tb, "free-run-driven d2 (500 m) WRF OLR brightness temp. (K)"),
+        [
+            (hd2_lon, hd2_lat, hd2_tb, "HRRR-driven d2 (500 m) WRF OLR brightness temp. (K)"),
+            (hrrr_lon, hrrr_lat, hrrr_tb, "HRRR OLR brightness temp. (K)"),
+            (
+                goes_lon, goes_lat, goes_tb,
+                f"GOES ABI ch.13 brightness temp. (K)\n{goes_time:%Y-%m-%d %H:%M} UTC scan",
+            ),
+        ],
+        ctt_levels, cmap, domain_pad_deg, "both", "K",
+    )
+
+    if suptitle is not None:
+        fig.suptitle(suptitle, fontsize=16, fontweight="bold")
+    if out_file is not None:
+        fig.savefig(out_file, dpi=150, bbox_inches="tight")
+    return fig
+
+
+def plot_d2_forcing_refl_comparison_4panel(
+    free_d2_file: str | Path,
+    hrrr_d2_file: str | Path,
+    hrrr_file: str | Path,
+    mrms_file: str | Path,
+    refl_levels: np.ndarray = DEFAULT_REFL_LEVELS,
+    refl_cmap: str = "turbo",
+    domain_pad_deg: float = 0.5,
+    figsize: tuple[float, float] = (12.6, 7.9),
+    suptitle: str | None = None,
+    out_file: str | Path | None = None,
+):
+    """2x2 column-max radar-reflectivity comparison of two 500-m runs:
+    free-run-driven d2 | HRRR-driven d2 on top, HRRR (`refc`) | MRMS
+    (`MergedReflectivityQCComposite`, observed) below. See
+    `plot_d2_forcing_tb_comparison_4panel` and `plot_d2_refl_comparison_4panel`.
+    """
+    free_lon, free_lat, free_refl, _ = wrf_reader.read_column_max_reflectivity(free_d2_file)
+    hd2_lon, hd2_lat, hd2_refl, _ = wrf_reader.read_column_max_reflectivity(hrrr_d2_file)
+    hrrr_lon, hrrr_lat, hrrr_refl, _ = hrrr_reader.read_composite_reflectivity(hrrr_file)
+    mrms_lon, mrms_lat, mrms_refl, mrms_time = mrms_reader.read_composite_reflectivity(mrms_file)
+    proj = wrf_reader.get_lambert_projection(free_d2_file)
+
+    fig, axes = plt.subplots(
+        2, 2, figsize=figsize, subplot_kw={"projection": proj}, constrained_layout=True
+    )
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02)
+
+    _nested_four_panel(
+        fig, axes,
+        (free_lon, free_lat, free_refl, "free-run-driven d2 (500 m) WRF max reflectivity (dBZ)"),
+        [
+            (hd2_lon, hd2_lat, hd2_refl, "HRRR-driven d2 (500 m) WRF max reflectivity (dBZ)"),
+            (hrrr_lon, hrrr_lat, hrrr_refl, "HRRR composite reflectivity (dBZ)"),
+            (
+                mrms_lon, mrms_lat, mrms_refl,
+                f"MRMS composite reflectivity (dBZ)\n{mrms_time:%Y-%m-%d %H:%M} UTC",
+            ),
+        ],
+        refl_levels, refl_cmap, domain_pad_deg, "max", "dBZ",
+    )
+
+    if suptitle is not None:
+        fig.suptitle(suptitle, fontsize=16, fontweight="bold")
+    if out_file is not None:
+        fig.savefig(out_file, dpi=150, bbox_inches="tight")
+    return fig
+
+
+def _resolve_free_d2_run_dir(hrrr_d2_run_dir: Path, free_run_dir: str | Path | None) -> Path:
+    if free_run_dir is not None:
+        return Path(free_run_dir)
+    case = hrrr_d2_run_dir.parent.name
+    for driven, free in _HRRR_DRIVEN_TO_FREE_CASE.items():
+        if case.endswith(driven):
+            return hrrr_d2_run_dir.parent.parent / (case[: -len(driven)] + free) / hrrr_d2_run_dir.name
+    raise ValueError(
+        f"no known free-run-driven counterpart for case {case!r}; pass free_run_dir= "
+        f"explicitly (known suffixes: {sorted(_HRRR_DRIVEN_TO_FREE_CASE)})"
+    )
+
+
+def plot_run_d2_forcing_tb_comparison_4panel(
+    time: dt.datetime | str,
+    run_name: str,
+    run_dir: str | Path,
+    free_run_dir: str | Path | None = None,
+    hrrr_base_dir: str | Path = "satoshi_forcing_data/hrrr/hrrrnat_data",
+    goes_dir: str | Path = "goes_data",
+    channel: int = 13,
+    satellite: str = goes_reader.DEFAULT_SATELLITE,
+    domain: str = "d01",
+    output_base_dir: str | Path | None = None,
+    auto_download_goes: bool = False,
+    **kwargs,
+):
+    """Wrapper around `plot_d2_forcing_tb_comparison_4panel` that takes a time
+    plus the HRRR-driven 500-m run's name/directory and locates both d2
+    wrfouts and the HRRR / GOES files itself.
+
+    `run_dir` is the HRRR-driven run (e.g.
+    `satoshi_testruns/20250917lassobnfwrfhrrr4/rund2`); the free-run-driven
+    panel comes from `free_run_dir`, defaulting to the same subdir of the
+    matching `*hrrr3` case directory (`_HRRR_DRIVEN_TO_FREE_CASE`). Both
+    runs write the domain as `wrfout_d01_*`, so `domain` applies to both.
+
+    Saved filenames use the `d2_free_vs_hrrr_olr_tb_4panel` prefix. Other
+    parameters mirror `plot_run_d2_tb_comparison_4panel`.
+    """
+    if isinstance(time, str):
+        time = dt.datetime.fromisoformat(time)
+
+    run_dir = Path(run_dir)
+    free_dir = _resolve_free_d2_run_dir(run_dir, free_run_dir)
+    hrrr_d2_file = _find_wrf_file(run_dir, domain, time)
+    free_d2_file = _find_wrf_file(free_dir, domain, time)
+    hrrr_file = _find_hrrr_file(hrrr_base_dir, time)
+    goes_file = _resolve_goes_file(time, goes_dir, channel, satellite, auto_download_goes)
+
+    if output_base_dir is not None and "out_file" not in kwargs:
+        kwargs["out_file"] = _output_path(
+            output_base_dir, "d2_free_vs_hrrr_olr_tb_4panel", run_dir, time
+        )
+
+    suptitle = kwargs.pop("suptitle", f"{run_name} -- {time:%Y-%m-%d %H:%M} UTC")
+    return plot_d2_forcing_tb_comparison_4panel(
+        free_d2_file, hrrr_d2_file, hrrr_file, goes_file, suptitle=suptitle, **kwargs
+    )
+
+
+def plot_run_d2_forcing_refl_comparison_4panel(
+    time: dt.datetime | str,
+    run_name: str,
+    run_dir: str | Path,
+    free_run_dir: str | Path | None = None,
+    hrrr_base_dir: str | Path = "satoshi_forcing_data/hrrr/hrrrnat_data",
+    mrms_dir: str | Path = "mrms_data",
+    domain: str = "d01",
+    output_base_dir: str | Path | None = None,
+    auto_download_mrms: bool = False,
+    **kwargs,
+):
+    """Wrapper around `plot_d2_forcing_refl_comparison_4panel`; the
+    reflectivity counterpart of `plot_run_d2_forcing_tb_comparison_4panel` --
+    see there for the free-run-counterpart resolution. Saved filenames use
+    the `d2_free_vs_hrrr_refl_4panel` prefix.
+    """
+    if isinstance(time, str):
+        time = dt.datetime.fromisoformat(time)
+
+    run_dir = Path(run_dir)
+    free_dir = _resolve_free_d2_run_dir(run_dir, free_run_dir)
+    hrrr_d2_file = _find_wrf_file(run_dir, domain, time)
+    free_d2_file = _find_wrf_file(free_dir, domain, time)
+    hrrr_file = _find_hrrr_file(hrrr_base_dir, time)
+    mrms_file = _resolve_mrms_file(time, mrms_dir, auto_download_mrms)
+
+    if output_base_dir is not None and "out_file" not in kwargs:
+        kwargs["out_file"] = _output_path(
+            output_base_dir, "d2_free_vs_hrrr_refl_4panel", run_dir, time
+        )
+
+    suptitle = kwargs.pop("suptitle", f"{run_name} -- {time:%Y-%m-%d %H:%M} UTC")
+    return plot_d2_forcing_refl_comparison_4panel(
+        free_d2_file, hrrr_d2_file, hrrr_file, mrms_file, suptitle=suptitle, **kwargs
+    )
+
+
+# ---------------------------------------------------------------------------
 # d3 (100-m) 4-panel comparisons
 #
 # For the `rund2d3` runs: the 500-m domain (ndown-forced from d1) run
