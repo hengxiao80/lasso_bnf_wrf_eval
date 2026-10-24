@@ -28,3 +28,7 @@ crtm_cache/
 # of this repo (see CLAUDE.md).
 /satoshi_forcing_data
 /satoshi_testruns
+
+# Claude Code session index and transcript dumps (claude-sessions)
+notes/sessions.md
+notes/transcripts/

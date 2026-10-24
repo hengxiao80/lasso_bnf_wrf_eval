@@ -1,0 +1,38 @@
+# Claude Code sessions of this project, for claude-sessions (rules and
+# conventions in its README). `claude-sessions index`, run by the hooks at
+# every session start and end, writes the index file; delete this file to
+# turn it all off here.
+#
+# A session goes to the first of these that claims it:
+#   1. a group whose `ids` holds the first 8 characters of its session ID;
+#   2. a group whose key starts the name you gave it ("setup: part 2" goes
+#      to `setup`); groups exist only here, a name never creates one;
+#   3. the first group, in file order, with a `names` entry found in the
+#      name you gave it or in Claude Code's own title (case, spaces and
+#      punctuation ignored).
+# Sessions nobody claims are listed under "Ungrouped"; sessions without a
+# single prompt are only counted. Groups appear in the index in this order.
+
+[paths]           # relative to this file; "" turns transcripts or handoffs off
+index = "notes/sessions.md"
+transcripts = "notes/transcripts"
+handoffs = "notes/handoffs"
+
+# [[group]]
+# key = "setup"
+# title = "Project setup"
+# names = ["setup"]
+
+[[group]]
+key = "software"
+title = "Software"
+
+[[group]]
+key = "claude"
+title = "Claude Code"
+
+[[group]]
+key = "junk"
+title = "Redundant or stray"
+# Stray sessions go here by ID, then: claude-sessions delete --group junk
+ids = []
