@@ -115,6 +115,31 @@ D2HRRR_SCHEMES = {
 # rund1/rund1-mp52/rund1-mp53.
 DYNLIT_SCHEMES = {"rund1-dynlit": SCHEMES["rund1-dynlit"]}
 
+# `bnf_wrf_da` WRF-DART runs, for the "da"-scope 4-panel comparisons (DA
+# ensemble mean | HRRR | free run | MRMS; `plotting.plot_run_da_refl_*`). Key:
+# the run's `thompson_refl_mean/` dir (one file per 15-min analysis time, see
+# `da.py`); value: (suptitle label, the free run's wrfout dir on the same
+# grid). Frame times are the hourly DA analysis times the free run also has.
+_DA_CASE_20250520 = Path("/gpfs/wolf2/arm/cli120/proj-shared/hengxiao80/bnf_wrf_da/cases/20250520")
+DA_RUNS: dict[Path, tuple[str, Path]] = {
+    _DA_CASE_20250520 / "da_theta_m0_n50" / "diag_conv_refl_f2" / "thompson_refl_mean": (
+        "2.5-km (D1) WRF-DART, 50-member EAKF, ensemble mean",
+        _DA_CASE_20250520 / "theta_m0",
+    ),
+}
+# "da"-scope type -> (DA stage, DA ensemble-mean definition): which
+# `REFL_COLMAX_<stage>_<mean>` field the DA panel shows.
+DA_FIELDS = {
+    "da_refl_dart": ("ANL", "DART"),
+    "da_refl_memdbz": ("ANL", "MEMDBZ"),
+    "da_refl_state": ("ANL", "STATE"),
+}
+# "da"-scope type of DA fields only (no observations, no free run): DART's
+# prior | posterior mean, forecast | analysis mean state
+# (`plotting.plot_run_da_refl_stages_4panel`).
+DA_STAGES_TYPE = "da_refl_stages"
+DA_TYPES = [*DA_FIELDS, DA_STAGES_TYPE]
+
 # Types needing a *pair* of consecutive-hour wrfout times (the difference
 # of LPOS/LNEG/LNEU between them), not a single time -- so the run's very
 # last hourly timestamp (no successor) must be excluded from the
@@ -125,7 +150,7 @@ PAIRED_TYPES = {"lightning_cg", "lightning_total"}
 # iterates every case x d1 scheme; "case" iterates case days only; "d2run"
 # iterates every case x d2 scheme (D2_SCHEMES); "d3run" every case x d3
 # scheme (D3_SCHEMES); "d2hrrr" every HRRR-driven case (D2HRRR_CASES) x
-# D2HRRR_SCHEMES.
+# D2HRRR_SCHEMES; "da" every DA run (DA_RUNS).
 TYPES: dict[str, tuple[str, int, str]] = {
     "tb4": ("run", 60, "wrf_ctt_crtm_hrrr_goes_tb_comparison"),
     "tb4_simple": ("run", 60, "wrf_simple_tb_crtm_hrrr_goes_tb_comparison"),
@@ -154,6 +179,10 @@ TYPES: dict[str, tuple[str, int, str]] = {
     # `when` is each window's *start* time (see PAIRED_TYPES above).
     "lightning_cg": ("dynlit", 60, "lightning_cg_wrf_mrms"),
     "lightning_total": ("dynlit", 60, "lightning_total_wrf_glm"),
+    # DA ensemble-mean analysis | HRRR | free run | MRMS, hourly (HRRR's
+    # analyses), one type per DA reflectivity definition (DA_FIELDS).
+    **{t: ("da", 60, f"da_refl_{st.lower()}_{m.lower()}_4panel") for t, (st, m) in DA_FIELDS.items()},
+    DA_STAGES_TYPE: ("da", 60, "da_refl_fcst_anl_4panel"),
 }
 GROUPS = {
     "comparison": ["tb4", "tb4_simple", "refl3"],
@@ -162,7 +191,10 @@ GROUPS = {
     "d3": ["d3_tb4", "d3_refl4"],
     "d2hrrr": ["d2hrrr_tb4", "d2hrrr_refl4"],
     "lightning": ["lightning_cg", "lightning_total"],
-    "all": list(TYPES),
+    "da_refl": DA_TYPES,
+    # The DA types read a run outside `satoshi_testruns` and are rendered on
+    # their own (`--which da_refl`), so `all` leaves them out.
+    "all": [t for t in TYPES if t not in DA_TYPES],
 }
 
 
@@ -186,12 +218,13 @@ def apply_runs_config(path: str | Path, domain: str = DEFAULT_DOMAIN) -> None:
     """Replace CASES/SCHEMES with the runs of a `runs_config` JSON file.
 
     Scheme keys are the run dirs' basenames (what `_render` looks labels up
-    by), so they must be unique. The d2 / d3 / dyn-lightning scopes are
+    by), so they must be unique. The d2 / d3 / dyn-lightning / DA scopes are
     emptied -- they assume the built-in layout and dyn-lightning output."""
-    global CASES, SCHEMES, D2_SCHEMES, D3_SCHEMES, D2HRRR_SCHEMES, DYNLIT_SCHEMES
+    global CASES, SCHEMES, D2_SCHEMES, D3_SCHEMES, D2HRRR_SCHEMES, DYNLIT_SCHEMES, DA_RUNS
     rs = load_runset(path, domain)
     CASES = [rs.case]
     SCHEMES, D2_SCHEMES, D3_SCHEMES, D2HRRR_SCHEMES, DYNLIT_SCHEMES = {}, {}, {}, {}, {}
+    DA_RUNS = {}
     RUN_DIRS.clear()
     for name, d in rs.runs.items():
         if d.name in SCHEMES:
@@ -246,6 +279,17 @@ def _wrf_times(run_dir: Path, domain: str, cadence_minutes: int) -> list[dt.date
     return [_parse_wrfout_time(f, domain) for f in files]
 
 
+def _da_mean_times(mean_dir: Path, domain: str, cadence_minutes: int) -> list[dt.datetime]:
+    """Analysis times of a DA run's `thompson_refl_mean_<domain>_*.nc` files,
+    on the `cadence_minutes` grid (from midnight)."""
+    prefix = f"thompson_refl_mean_{domain}_"
+    times = [
+        dt.datetime.strptime(f.name[len(prefix):-3], "%Y-%m-%d_%H_%M_%S")
+        for f in mean_dir.glob(f"{prefix}*.nc")
+    ]
+    return sorted(t for t in times if (t.hour * 60 + t.minute) % cadence_minutes == 0)
+
+
 def build_worklist(
     types: list[str],
     *,
@@ -295,6 +339,19 @@ def build_worklist(
                             continue
                         out_path = _output_path(out_dir, prefix, run_dir, when)
                         items.append((ptype, run_dir, when, out_path))
+        elif scope == "da":
+            for mean_dir, (_, free_dir) in DA_RUNS.items():
+                free = set(_wrf_times(free_dir, domain, cadence))
+                for when in _da_mean_times(mean_dir, domain, cadence):
+                    if ptype in DA_FIELDS and when not in free:
+                        continue
+                    if start and when < start:
+                        continue
+                    if end and when > end:
+                        continue
+                    # named after the DA run's diagnostics dir (the mean dir's parent)
+                    out_path = _output_path(out_dir, prefix, mean_dir.parent, when)
+                    items.append((ptype, mean_dir, when, out_path))
         else:  # scope == "case"
             for case in CASES:
                 ref_dir = _ref_dir(runs_root, case)
@@ -416,6 +473,19 @@ def _render(item: tuple, opts: argparse.Namespace) -> None:
                 when, DYNLIT_SCHEMES[Path(key).name], key,
                 goes_dir=opts.goes_dir, domain=opts.domain, out_file=out_path,
                 auto_download_glm=opts.auto_download,
+            )
+        elif ptype in DA_FIELDS:
+            stage, mean = DA_FIELDS[ptype]
+            label, free_dir = DA_RUNS[Path(key)]
+            plotting.plot_run_da_refl_comparison_4panel(
+                when, label, key, free_dir, da_mean=mean, da_stage=stage,
+                hrrr_base_dir=opts.hrrr_dir, mrms_dir=opts.mrms_dir,
+                domain=opts.domain, out_file=out_path,
+                auto_download_mrms=opts.auto_download,
+            )
+        elif ptype == DA_STAGES_TYPE:
+            plotting.plot_run_da_refl_stages_4panel(
+                when, DA_RUNS[Path(key)][0], key, domain=opts.domain, out_file=out_path,
             )
         elif ptype == "hrrr_tb":
             plotting.plot_case_hrrr_tb_single(

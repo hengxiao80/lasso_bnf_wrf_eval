@@ -12,6 +12,7 @@ import numpy as np
 from matplotlib.colors import Colormap, LinearSegmentedColormap
 
 from . import crtm as crtm_reader
+from . import da as da_reader
 from . import goes as goes_reader
 from . import hrrr as hrrr_reader
 from . import lightning as lightning_reader
@@ -1540,6 +1541,321 @@ def plot_run_d3_refl_comparison_4panel(
     return plot_d3_refl_comparison_4panel(
         d3_file, d2_file, hrrr_file, mrms_file, suptitle=suptitle, **kwargs
     )
+
+
+# ---------------------------------------------------------------------------
+# DA (WRF-DART) ensemble-mean 4-panel reflectivity comparisons
+#
+# For the `bnf_wrf_da` WRF-DART runs on the d1 grid (first: the 2025-05-20
+# 50-member EAKF run `_conv_refl_f2`). One frame per analysis time, 2x2:
+#
+#     DA ensemble mean              |   HRRR `refc` (f00 analysis)
+#     free run column-max REFL_10CM |   MRMS composite
+#
+# The DA panel is one column-max ensemble mean from the run's
+# `thompson_refl_mean_*.nc` files (`da.py`), picked by `da_mean` / `da_stage`.
+# Everything else follows the d1 `refl3` plots: the WRF domain's Lambert
+# projection, its footprint padded by `domain_pad_deg` as the map extent, HRRR
+# and MRMS cropped to it, the domain outlined in red, the BNF star,
+# `DEFAULT_REFL_LEVELS`, turbo, one shared colorbar.
+#
+# With `coverage_threshold` set, each panel title has a second line with the
+# share of the WRF domain above that many dBZ: the WRF-grid fields over the
+# interior columns (WRF leaves `REFL_10CM` at 0 dBZ on the outermost row and
+# column), HRRR and MRMS over their own pixels inside the WRF domain's Lambert
+# x/y rectangle (the method of `run_compare`'s time series).
+# ---------------------------------------------------------------------------
+
+_DA_STAGE_TITLES = {"ANL": "DA analysis", "FCST": "DA 15-min forecast"}
+_DA_MEAN_TITLES = {
+    "MEMDBZ": "members' reflectivity, mean in dBZ",
+    "MEMZ": "members' reflectivity, mean in Z",
+    "STATE": "reflectivity of the mean state",
+}
+
+
+def _da_field_title(stage: str, mean: str) -> str:
+    """Panel title of the DA field `REFL_COLMAX_<stage>_<mean>`. DART's mean
+    is its prior (`input_mean.nc`) for the forecast and its posterior
+    (`postassim_mean.nc`) for the analysis."""
+    if mean == "DART":
+        what = f"DART's {'prior' if stage == 'FCST' else 'posterior'} mean of REFL_10CM"
+    else:
+        what = _DA_MEAN_TITLES[mean]
+    return f"{_DA_STAGE_TITLES[stage]}: {what}"
+
+
+def _coverage_inside_domain(
+    lon: np.ndarray,
+    lat: np.ndarray,
+    values: np.ndarray,
+    proj,
+    domain_lon: np.ndarray,
+    domain_lat: np.ndarray,
+    threshold: float,
+) -> float:
+    """Share of a (HRRR / MRMS) field's own pixels inside the WRF domain's
+    Lambert x/y rectangle that exceed `threshold`; NaN pixels count as below
+    it. Same selection as `run_compare._inside` (the WRF grid is regular in
+    its own projection, so its x/y bounding box is the domain)."""
+    dxy = proj.transform_points(ccrs.PlateCarree(), domain_lon, domain_lat)
+    x0, x1 = dxy[..., 0].min(), dxy[..., 0].max()
+    y0, y1 = dxy[..., 1].min(), dxy[..., 1].max()
+    lon, lat, values = _crop_to_extent(
+        lon, lat, values, _domain_extent(domain_lon, domain_lat, 0.5), pad_cells=0
+    )
+    xy = proj.transform_points(ccrs.PlateCarree(), lon, lat)
+    inside = (xy[..., 0] >= x0) & (xy[..., 0] <= x1) & (xy[..., 1] >= y0) & (xy[..., 1] <= y1)
+    with np.errstate(invalid="ignore"):
+        return float(np.mean(values[inside] > threshold))
+
+
+def _coverage_wrf_interior(values: np.ndarray, threshold: float) -> float:
+    """Share of a WRF-grid field's interior columns (outermost row and column
+    left out) exceeding `threshold`."""
+    with np.errstate(invalid="ignore"):
+        return float(np.mean(values[1:-1, 1:-1] > threshold))
+
+
+def plot_da_refl_comparison_4panel(
+    da_file: str | Path,
+    hrrr_file: str | Path,
+    free_file: str | Path,
+    mrms_file: str | Path,
+    da_mean: str = "STATE",
+    da_stage: str = "ANL",
+    free_label: str = "Free run",
+    coverage_threshold: float | None = 30.0,
+    refl_levels: np.ndarray = DEFAULT_REFL_LEVELS,
+    refl_cmap: str = "turbo",
+    domain_pad_deg: float = 0.5,
+    figsize: tuple[float, float] = (10.5, 7.9),
+    suptitle: str | None = None,
+    out_file: str | Path | None = None,
+):
+    """2x2 column-max reflectivity comparison of a WRF-DART run's ensemble
+    mean: DA mean | HRRR (`refc`) on top, free run (`REFL_10CM`) | MRMS
+    (`MergedReflectivityQCComposite`) below. See the module comment above
+    "DA (WRF-DART) ensemble-mean 4-panel reflectivity comparisons".
+
+    Parameters
+    ----------
+    da_file : a `thompson_refl_mean_<domain>_<time>.nc` file (`da.py`).
+    hrrr_file, mrms_file : as for `plot_refl_comparison`.
+    free_file : the free run's `wrfout` at the same time, on the same grid
+        (checked: `ValueError` if the DA and free-run lat/lon differ).
+    da_mean, da_stage : which DA field, `REFL_COLMAX_<da_stage>_<da_mean>`
+        (`da.MEANS`, `da.STAGES`).
+    free_label : the free run's name in its panel title; the title adds the
+        forecast lead from the file's `SIMULATION_START_DATE`.
+    coverage_threshold : dBZ; if not None, each title gets a second line
+        with the share of the domain above it. None leaves it out.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    import netCDF4
+
+    da_mean, da_stage = da_mean.upper(), da_stage.upper()
+    da_lon, da_lat, da_refl, da_time = da_reader.read_da_column_max_reflectivity(
+        da_file, da_mean, da_stage
+    )
+    free_lon, free_lat, free_refl, free_time = wrf_reader.read_column_max_reflectivity(free_file)
+    if da_time != free_time:
+        raise ValueError(f"DA file is valid at {da_time}, free-run file at {free_time}")
+    if da_lon.shape != free_lon.shape or not (
+        np.allclose(da_lon, free_lon, atol=1e-3) and np.allclose(da_lat, free_lat, atol=1e-3)
+    ):
+        raise ValueError(f"{da_file} and {free_file} are not on the same grid")
+    with netCDF4.Dataset(free_file) as nc:
+        free_start = dt.datetime.strptime(nc.SIMULATION_START_DATE, "%Y-%m-%d_%H:%M:%S")
+    lead_h = (free_time - free_start).total_seconds() / 3600.0
+
+    hrrr_lon, hrrr_lat, hrrr_refl, _ = hrrr_reader.read_composite_reflectivity(hrrr_file)
+    mrms_lon, mrms_lat, mrms_refl, mrms_time = mrms_reader.read_composite_reflectivity(mrms_file)
+    proj = wrf_reader.get_lambert_projection(da_file)
+
+    titles = [
+        _da_field_title(da_stage, da_mean),
+        "HRRR composite reflectivity (f00)",
+        f"{free_label}, {lead_h:.0f}-h forecast: max reflectivity",
+        f"MRMS composite reflectivity, {mrms_time:%Y-%m-%d %H:%M} UTC",
+    ]
+    if coverage_threshold is not None:
+        thr = coverage_threshold
+        shares = [
+            _coverage_wrf_interior(da_refl, thr),
+            _coverage_inside_domain(hrrr_lon, hrrr_lat, hrrr_refl, proj, da_lon, da_lat, thr),
+            _coverage_wrf_interior(free_refl, thr),
+            _coverage_inside_domain(mrms_lon, mrms_lat, mrms_refl, proj, da_lon, da_lat, thr),
+        ]
+        titles = [f"{t}\narea > {thr:g} dBZ: {100 * s:.2f} %" for t, s in zip(titles, shares)]
+
+    extent = _domain_extent(da_lon, da_lat, domain_pad_deg)
+    hrrr_lon_c, hrrr_lat_c, hrrr_refl_c = _crop_to_extent(hrrr_lon, hrrr_lat, hrrr_refl, extent)
+    mrms_lon_c, mrms_lat_c, mrms_refl_c = _crop_to_extent(mrms_lon, mrms_lat, mrms_refl, extent)
+    domain_outline = _domain_outline(da_lon, da_lat)
+
+    fig, axes = plt.subplots(
+        2, 2, figsize=figsize, subplot_kw={"projection": proj}, constrained_layout=True
+    )
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02)
+
+    _plot_row(
+        fig, axes.flatten(),
+        [
+            (da_lon, da_lat, da_refl, titles[0]),
+            (hrrr_lon_c, hrrr_lat_c, hrrr_refl_c, titles[1]),
+            (free_lon, free_lat, free_refl, titles[2]),
+            (mrms_lon_c, mrms_lat_c, mrms_refl_c, titles[3]),
+        ],
+        refl_levels, refl_cmap, extent, domain_outline, extend="max", colorbar_label="dBZ",
+    )
+
+    if suptitle is not None:
+        fig.suptitle(suptitle, fontsize=16, fontweight="bold")
+    if out_file is not None:
+        fig.savefig(out_file, dpi=150, bbox_inches="tight")
+    return fig
+
+
+def plot_run_da_refl_comparison_4panel(
+    time: dt.datetime | str,
+    run_name: str,
+    da_mean_dir: str | Path,
+    free_run_dir: str | Path,
+    da_mean: str = "STATE",
+    da_stage: str = "ANL",
+    hrrr_base_dir: str | Path = "satoshi_forcing_data/hrrr/hrrrnat_data",
+    mrms_dir: str | Path = "mrms_data",
+    domain: str = "d01",
+    output_base_dir: str | Path | None = None,
+    auto_download_mrms: bool = False,
+    **kwargs,
+):
+    """Wrapper around `plot_da_refl_comparison_4panel` that takes an
+    analysis time, the DA run's `thompson_refl_mean/` directory and the free
+    run's directory, and locates the DA, free-run, HRRR and MRMS files itself.
+
+    `run_name` goes into the suptitle; the free-run panel is labelled
+    "Free run <free_run_dir's name>". With `output_base_dir`, the figure is
+    saved as `da_refl_<stage>_<mean>_4panel_<the DA diagnostics dir's last two
+    path components>_<time>.png` (e.g. `..._da_theta_m0_n50_diag_conv_refl_f2_...`).
+    Other parameters mirror `plot_run_refl_comparison`; **kwargs go to
+    `plot_da_refl_comparison_4panel`.
+    """
+    if isinstance(time, str):
+        time = dt.datetime.fromisoformat(time)
+
+    da_mean_dir, free_run_dir = Path(da_mean_dir), Path(free_run_dir)
+    da_file = da_reader.find_da_refl_mean_file(da_mean_dir, time, domain)
+    free_file = _find_wrf_file(free_run_dir, domain, time)
+    hrrr_file = _find_hrrr_file(hrrr_base_dir, time)
+    mrms_file = _resolve_mrms_file(time, mrms_dir, auto_download_mrms)
+
+    if output_base_dir is not None and "out_file" not in kwargs:
+        prefix = f"da_refl_{da_stage.lower()}_{da_mean.lower()}_4panel"
+        kwargs["out_file"] = _output_path(output_base_dir, prefix, da_mean_dir.parent, time)
+
+    kwargs.setdefault("free_label", f"Free run {free_run_dir.name}")
+    suptitle = kwargs.pop("suptitle", f"{run_name} -- {time:%Y-%m-%d %H:%M} UTC")
+    return plot_da_refl_comparison_4panel(
+        da_file, hrrr_file, free_file, mrms_file,
+        da_mean=da_mean, da_stage=da_stage, suptitle=suptitle, **kwargs,
+    )
+
+
+# Default panels of `plot_da_refl_stages_4panel`, as (stage, mean): forecast
+# | analysis in the columns, DART's mean | the mean state's reflectivity in
+# the rows.
+DA_STAGE_PANELS = (("FCST", "DART"), ("ANL", "DART"), ("FCST", "STATE"), ("ANL", "STATE"))
+
+
+def plot_da_refl_stages_4panel(
+    da_file: str | Path,
+    panels: tuple[tuple[str, str], ...] = DA_STAGE_PANELS,
+    coverage_threshold: float | None = 30.0,
+    refl_levels: np.ndarray = DEFAULT_REFL_LEVELS,
+    refl_cmap: str = "turbo",
+    domain_pad_deg: float = 0.5,
+    figsize: tuple[float, float] = (10.5, 7.9),
+    suptitle: str | None = None,
+    out_file: str | Path | None = None,
+):
+    """2x2 grid of four column-max ensemble-mean reflectivity fields of one
+    DA mean-reflectivity file (`da.py`), no observations: by default DART's
+    prior mean | DART's posterior mean on top, the forecast mean state's |
+    the analysis mean state's reflectivity below (`DA_STAGE_PANELS`).
+
+    `panels` lists four (stage, mean) pairs (`da.STAGES`, `da.MEANS`) in
+    reading order. Same map, levels, outline, BNF star and coverage line
+    (interior columns) as `plot_da_refl_comparison_4panel`.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    if len(panels) != 4:
+        raise ValueError(f"need four (stage, mean) panels, got {len(panels)}")
+    fields = []
+    for stage, mean in panels:
+        stage, mean = stage.upper(), mean.upper()
+        lon, lat, refl, _ = da_reader.read_da_column_max_reflectivity(da_file, mean, stage)
+        title = _da_field_title(stage, mean)
+        if coverage_threshold is not None:
+            share = _coverage_wrf_interior(refl, coverage_threshold)
+            title += f"\narea > {coverage_threshold:g} dBZ: {100 * share:.2f} %"
+        fields.append((lon, lat, refl, title))
+    proj = wrf_reader.get_lambert_projection(da_file)
+    extent = _domain_extent(lon, lat, domain_pad_deg)
+    domain_outline = _domain_outline(lon, lat)
+
+    fig, axes = plt.subplots(
+        2, 2, figsize=figsize, subplot_kw={"projection": proj}, constrained_layout=True
+    )
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02)
+
+    _plot_row(
+        fig, axes.flatten(), fields,
+        refl_levels, refl_cmap, extent, domain_outline, extend="max", colorbar_label="dBZ",
+    )
+
+    if suptitle is not None:
+        fig.suptitle(suptitle, fontsize=16, fontweight="bold")
+    if out_file is not None:
+        fig.savefig(out_file, dpi=150, bbox_inches="tight")
+    return fig
+
+
+def plot_run_da_refl_stages_4panel(
+    time: dt.datetime | str,
+    run_name: str,
+    da_mean_dir: str | Path,
+    panels: tuple[tuple[str, str], ...] = DA_STAGE_PANELS,
+    domain: str = "d01",
+    output_base_dir: str | Path | None = None,
+    **kwargs,
+):
+    """Wrapper around `plot_da_refl_stages_4panel` that takes an analysis
+    time and the DA run's `thompson_refl_mean/` directory. With
+    `output_base_dir`, the figure is saved as `da_refl_fcst_anl_4panel_<the DA
+    diagnostics dir's last two path components>_<time>.png`; `run_name` goes
+    into the suptitle. **kwargs go to `plot_da_refl_stages_4panel`.
+    """
+    if isinstance(time, str):
+        time = dt.datetime.fromisoformat(time)
+
+    da_mean_dir = Path(da_mean_dir)
+    da_file = da_reader.find_da_refl_mean_file(da_mean_dir, time, domain)
+
+    if output_base_dir is not None and "out_file" not in kwargs:
+        kwargs["out_file"] = _output_path(
+            output_base_dir, "da_refl_fcst_anl_4panel", da_mean_dir.parent, time
+        )
+
+    suptitle = kwargs.pop("suptitle", f"{run_name} -- {time:%Y-%m-%d %H:%M} UTC")
+    return plot_da_refl_stages_4panel(da_file, panels=panels, suptitle=suptitle, **kwargs)
 
 
 # ---------------------------------------------------------------------------

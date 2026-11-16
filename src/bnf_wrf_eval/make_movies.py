@@ -49,6 +49,7 @@ HOURLY_TYPES = {
     "d2_tb4", "d2_refl4", "d3_tb4", "d3_refl4", "d2hrrr_tb4", "d2hrrr_refl4",
     "lightning_cg", "lightning_total",
     "panels_tb", "panels_refl",
+    "da_refl_dart", "da_refl_memdbz", "da_refl_state", "da_refl_stages",
 }
 
 GROUPS = {
@@ -58,6 +59,8 @@ GROUPS = {
     "d3": ["d3_tb4", "d3_refl4"],
     "d2hrrr": ["d2hrrr_tb4", "d2hrrr_refl4"],
     "lightning": ["lightning_cg", "lightning_total"],
+    # not in "all", like batch_plot (a run outside satoshi_testruns)
+    "da_refl": ["da_refl_dart", "da_refl_memdbz", "da_refl_state", "da_refl_stages"],
 }
 GROUPS["all"] = (
     GROUPS["comparison"] + GROUPS["single"] + GROUPS["d2"] + GROUPS["d3"] + GROUPS["d2hrrr"]

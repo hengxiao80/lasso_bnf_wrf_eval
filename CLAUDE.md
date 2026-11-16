@@ -140,6 +140,44 @@ already local): `WHICH=d2hrrr sbatch scripts/batch_plot.sbatch`, then `python -m
 d2hrrr`. One-time full run (2026-10-21): array job 1054840, 114/114 frames, 0 failures, ~2 min; 6 movies (2 fps) in
 `outputs/movies/d2_free_vs_hrrr_*.mp4`. Test frames: `outputs/d2hrrr_test/`.
 
+### DA (WRF-DART) ensemble-mean reflectivity 4-panel comparisons
+
+For the `bnf_wrf_da` 50-member EAKF run `_conv_refl_f2` of 2025-05-20 (`../bnf_wrf_da/cases/20250520/da_theta_m0_n50/`,
+2.5 km, the d1 grid; 15-min cycles from a 05-20 00Z cold start, analyses 05-20 00:15 to 05-21 06:00). Plan and
+background: `../bnf_wrf_da/notes/fulltest_comparison_plan.md`; task: `notes/handoffs/2026-11-15_fulltest_refl_movies.md`.
+**The DA panels are not wrfout `REFL_10CM`**: they come from the run's `diag_conv_refl_f2/thompson_refl_mean/
+thompson_refl_mean_d01_<t>.nc` (`da.py`), eight 2-D column maxima of 3-D ensemble means, `REFL_COLMAX_<ANL|FCST>_
+<DART|MEMDBZ|MEMZ|STATE>`: DART's prior/posterior mean of its `REFL_10CM` (`input_mean` / `postassim_mean`, mean in
+dBZ of DART's regression-updated reflectivity, not computed from the hydrometeors), the members' Thompson
+reflectivity recomputed offline and averaged in dBZ or linear Z, and the recomputed reflectivity of the mean state.
+The column maximum is always of the 3-D mean, never a mean of column maxima. `bnf_wrf_da` is read-only from here.
+
+Two layouts, both on the d1 domain's projection and extent (footprint padded 0.5 deg), outlined in red, BNF starred,
+`DEFAULT_REFL_LEVELS`, turbo, figsize 10.5x7.9:
+
+- **DA analysis mean | HRRR `refc` (f00) on top, free run column-max `REFL_10CM` | MRMS below**
+  (`plotting.plot_da_refl_comparison_4panel` / `plot_run_da_refl_comparison_4panel`), one movie per DA definition:
+  `batch_plot` types `da_refl_dart` (`ANL_DART`), `da_refl_memdbz` (`ANL_MEMDBZ`), `da_refl_state` (`ANL_STATE`).
+  The free run is `../bnf_wrf_da/cases/20250520/theta_m0` (the DA's control, `hybrid_opt=0`, `use_theta_m=0`, started
+  05-19 00Z; not sey's `rund1`); its title gives the forecast lead from `SIMULATION_START_DATE`.
+- **DA fields only, 15-min forecast | analysis** (`plot_da_refl_stages_4panel` / `plot_run_da_refl_stages_4panel`):
+  DART's prior | posterior mean on top, forecast | analysis mean state below. `batch_plot` type `da_refl_stages`.
+
+**Every panel title has a coverage line**, "area > 30 dBZ: x %" (`coverage_threshold`, None drops it): WRF-grid
+fields (DA and free run) over the interior columns (the outermost ring of WRF's `REFL_10CM` is 0 dBZ), HRRR and MRMS
+over their own pixels inside the WRF domain's Lambert x/y box (`run_compare._inside`'s method). At 05-20 19:00 these
+reproduce the plan's numbers (MRMS 2.13, HRRR 2.17, DART 3.24, members' dBZ mean 4.11, mean state 10.66 %); the free
+run reads 5.71 % (5.66 % over all columns, ring included).
+
+Batch: group and scope `da_refl` / `da` (`batch_plot.DA_RUNS`, `DA_FIELDS`, `DA_STAGES_TYPE`; not in `--which
+all`), hourly (HRRR's analyses), 30 frames per type (05-20 01:00 to 05-21 06:00). Output goes with the other DA
+comparisons: `WHICH=da_refl OUTPUT_ROOT=$REPO/outputs/compare/20250520lassobnfwrfhrrr3 sbatch
+scripts/batch_plot.sbatch`, then `python -m bnf_wrf_eval.make_movies --which da_refl --frames-root
+outputs/compare/20250520lassobnfwrfhrrr3/frames --movies-dir outputs/compare/20250520lassobnfwrfhrrr3/movies`.
+Movies `da_refl_{anl_dart,anl_memdbz,anl_state,fcst_anl}_4panel_da_theta_m0_n50_diag_conv_refl_f2.mp4` (2 fps).
+One-time full run (2026-11-16): array job 1215907, 120/120 frames, 0 failures, ~1 min; 4 movies, 30 frames each,
+all frames 1598x1182. Test frames: `outputs/da_refl_test/`.
+
 ## Environment and commands
 
 Package management is via `uv` (build backend `uv_build`, package layout under `src/`).
@@ -196,6 +234,9 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
     mass-cell edges in Lambert x/y, from the staggered `XLAT_U`/`XLONG_U`/`XLAT_V`/`XLONG_V`
     arrays rather than approximated from mass-point centers -- used by `lightning.py`'s
     observation-gridding).
+  - `da.py` -- reads the `bnf_wrf_da` WRF-DART runs' ensemble-mean reflectivity files
+    (`find_da_refl_mean_file`, `read_da_column_max_reflectivity`); see "DA (WRF-DART) ensemble-mean reflectivity
+    4-panel comparisons" above.
   - `hrrr.py` -- reads HRRR native-level analysis GRIB2 fields by GRIB2 metadata (`read_composite_reflectivity`,
     `read_olr`, `read_simulated_brightness_temperature`). Lazily bootstraps `eccodes`/`ecmwflibs` on first actual
     use (see `_eccodes_setup.py`) rather than at import time.
@@ -395,7 +436,7 @@ against the marketplace -- we hit this once with a ~10-month-stale Jupyter exten
     px), and encodes H.264 (`yuv420p`) via `imageio` + `imageio-ffmpeg`'s bundled static ffmpeg (there is
     no system `ffmpeg` here). Run as `python -m bnf_wrf_eval.make_movies --which comparison|single|all|lightning`.
     Frame rate: 12 fps for the 15-min / 5-min series, **2 fps for every hourly type** (`HOURLY_TYPES`:
-    `tb4`, `tb4_simple`, `refl3`, `hrrr_*`, `d2_*`, `d3_*`, `d2hrrr_*`, lightning, and `run_compare`'s `panels_*`) -- at
+    `tb4`, `tb4_simple`, `refl3`, `hrrr_*`, `d2_*`, `d3_*`, `d2hrrr_*`, `da_refl_*`, lightning, and `run_compare`'s `panels_*`) -- at
     12 fps a 73-frame hourly movie ran ~6 s and a d3 one 1-2 s. An explicit `--fps` applies to every movie.
     All existing hourly movies (57 + the 2 DA `panels_*`) were re-encoded at 2 fps on 2026-10-13.
   - `plotting.py` -- the comparison plots described above (the d1 3-panel / 4-panel families *and* the d2
