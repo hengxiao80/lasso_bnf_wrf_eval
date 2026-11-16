@@ -32,6 +32,10 @@ key = "claude"
 title = "Claude Code"
 
 [[group]]
+key = "fulltest"
+title = "Full-test DA run evaluation (bnf_wrf_da _conv_refl_f2)"
+
+[[group]]
 key = "junk"
 title = "Redundant or stray"
 # Stray sessions go here by ID, then: claude-sessions delete --group junk
